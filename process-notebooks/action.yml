@@ -1,0 +1,235 @@
+name: 'Process Notebooks'
+description: 'Run QA tools on Jupyter notebooks cross-platform'
+inputs:
+  command:
+    description: 'Command to run (linter, formatter, pynblint, link_checker, doi_checker, execute, metadata_checker, test_checker, accessibility_checker, figure_checker)'
+    required: true
+  notebooks:
+    description: 'JSON array of notebook paths'
+    required: true
+  pynblint_include_violations:
+    description: 'List of violations to include when running pynblint (comma-separated)'
+    required: false
+    default: ''
+  coverage_threshold:
+    description: 'Minimum code coverage percentage for test_checker (default: 80)'
+    required: false
+    default: '80'
+runs:
+  using: 'composite'
+  steps:
+    - name: Process notebooks
+      shell: bash -l {0}
+      run: |
+        python3 - << 'EOF'
+        import json
+        import os
+        import subprocess
+        import sys
+
+        from pathlib import Path
+        from ploomber_engine import execute_notebook
+
+        command = "${{ inputs.command }}"
+        notebooks_json = """${{ inputs.notebooks }}""".strip()
+
+        valid_commands = ['linter', 'formatter', 'pynblint', 'link_checker', 'doi_checker', 'execute',
+                          'metadata_checker', 'test_checker', 'accessibility_checker', 'figure_checker']
+        if command not in valid_commands:
+            print(f"Error: Invalid command '{command}'")
+            print(f"Valid commands: {', '.join(valid_commands)}")
+            sys.exit(1)
+
+        if not notebooks_json:
+            notebooks = []
+        else:
+            try:
+                notebooks = json.loads(notebooks_json)
+            except json.JSONDecodeError:
+                print(f"Error: Invalid JSON format")
+                sys.exit(1)
+
+        # Get action path for checker scripts
+        action_path = os.environ.get('GITHUB_ACTION_PATH', str(Path(__file__).parent))
+        output_dir = os.getenv("QA_OUTPUT_DIR", "qa_outputs")
+
+        result = 0
+        notebook_results = {}
+
+        for notebook in notebooks:
+            if not notebook:
+                continue
+
+            print(f"Processing {notebook} with {command}")
+
+            if command == "linter":
+                cmd = ["nbqa", "ruff check", notebook]
+            elif command == "formatter":
+                cmd = ["nbqa", "ruff format --diff", notebook]
+            elif command == "pynblint":
+                notebook_name = Path(notebook).name
+                lint_file = f"lint.{notebook_name}.json"
+                cmd = ["pynblint", "--output", lint_file, notebook]
+                include_violations_str = "${{ inputs.pynblint_include_violations }}".strip()
+                if include_violations_str:
+                    include_violations = [v.strip() for v in include_violations_str.split(',') if v.strip()]
+                    if include_violations:
+                        violations_json = '[' + ','.join(f'"{v}"' for v in include_violations) + ']'
+                        cmd.extend(["--include", violations_json])
+            elif command == "link_checker":
+                cmd = ["pytest-check-links", notebook]
+            elif command == "doi_checker":
+                cmd = [
+                    'python3',
+                    os.path.join(action_path, 'checkers', 'doi_checker.py'),
+                    '--notebooks', json.dumps([notebook]),
+                    '--output-dir', output_dir
+                ]
+                try:
+                    subprocess.run(cmd, check=True)
+                    notebook_results[notebook] = "success"
+                except subprocess.CalledProcessError:
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Results are written by the checker script, skip default processing
+                continue
+            elif command == "execute":
+                # Create cdsapi config file if needed
+                cdsapi_key = os.getenv("CDSAPI_KEY")
+                if cdsapi_key:
+                    print("Creating .cdsapirc file")
+                    cdsapi_rc = Path.home() / ".cdsapirc"
+                    if not cdsapi_rc.exists():
+                        with open(cdsapi_rc, 'w') as f:
+                            f.write("url: https://cds.climate.copernicus.eu/api\n")
+                            f.write(f"key: {cdsapi_key}")
+
+                output_dir = os.getenv("QA_OUTPUT_DIR", "qa_outputs")
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+                notebook_path = Path(notebook)
+                output_name = notebook_path.stem + ".output" + notebook_path.suffix
+                output_path = Path(output_dir) / output_name
+
+                # Execute notebook with memory profiling and CSV output
+                try:
+                    execute_notebook(
+                        input_path=notebook,
+                        output_path=str(output_path),
+                        profile_memory=True,
+                        save_profiling_data=True
+                    )
+                    print(f"✅ {command} finished successfully for {notebook}")
+                    notebook_results[notebook] = "success"
+                except Exception as e:
+                    print(f"❌ {command} failed for {notebook}: {e}")
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Skip subprocess call for execute
+                continue
+            elif command == "metadata_checker":
+                cmd = [
+                    'python3',
+                    os.path.join(action_path, 'checkers', 'metadata_checker.py'),
+                    '--notebooks', json.dumps([notebook]),
+                    '--output-dir', output_dir,
+                    '--check-readme'
+                ]
+                try:
+                    subprocess.run(cmd, check=True)
+                    notebook_results[notebook] = "success"
+                except subprocess.CalledProcessError:
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Results are written by the checker script, skip default processing
+                continue
+            elif command == "test_checker":
+                coverage_threshold_str = "${{ inputs.coverage_threshold }}".strip()
+                cmd = [
+                    'python3',
+                    os.path.join(action_path, 'checkers', 'test_checker.py'),
+                    '--notebooks', json.dumps([notebook]),
+                    '--output-dir', output_dir,
+                    '--coverage-threshold', coverage_threshold_str if coverage_threshold_str else '80'
+                ]
+                try:
+                    subprocess.run(cmd, check=True)
+                    notebook_results[notebook] = "success"
+                except subprocess.CalledProcessError:
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Results are written by the checker script, skip default processing
+                continue
+            elif command == "accessibility_checker":
+                # Call external checker script
+                cmd = [
+                    'python3',
+                    os.path.join(action_path, 'checkers', 'accessibility_checker.py'),
+                    '--notebooks', json.dumps([notebook]),
+                    '--output-dir', output_dir
+                ]
+                try:
+                    subprocess.run(cmd, check=True)
+                    notebook_results[notebook] = "success"
+                except subprocess.CalledProcessError:
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Results are written by the checker script, skip default processing
+                continue
+            elif command == "figure_checker":
+                cmd = [
+                    'python3',
+                    os.path.join(action_path, 'checkers', 'figure_checker.py'),
+                    '--notebooks', json.dumps([notebook]),
+                    '--output-dir', output_dir
+                ]
+                try:
+                    subprocess.run(cmd, check=True)
+                    notebook_results[notebook] = "success"
+                except subprocess.CalledProcessError:
+                    notebook_results[notebook] = "failure"
+                    result = 1
+                # Results are written by the checker script, skip default processing
+                continue
+
+            try:
+                subprocess.run(cmd, check=True)
+
+                # Handle pynblint recommendations
+                if command == "pynblint" and Path(lint_file).exists():
+                    with open(lint_file, 'r') as f:
+                        lint_data = json.load(f)
+                    if any('recommendation' in lint for lint in lint_data.get('lints', [])):
+                        print(f"❌ pynblint failed for {notebook}")
+                        notebook_results[notebook] = "failure"
+                        result = 1
+                    else:
+                        print(f"✅ {command} finished successfully for {notebook}")
+                        notebook_results[notebook] = "success"
+                else:
+                    print(f"✅ {command} finished successfully for {notebook}")
+                    notebook_results[notebook] = "success"
+            except subprocess.CalledProcessError:
+                print(f"❌ {command} failed for {notebook}")
+                notebook_results[notebook] = "failure"
+                result = 1
+            except Exception as e:
+                print(f"❌ Error processing {notebook}: {e}")
+                notebook_results[notebook] = "failure"
+                result = 1
+
+        # Write results to JSON file for workflow summary to parse
+        output_dir = os.getenv("QA_OUTPUT_DIR", "qa_outputs")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        results_file = Path(output_dir) / f"{command}-results.json"
+
+        results_data = {
+            "command": command,
+            "results": notebook_results
+        }
+
+        with open(results_file, 'w') as f:
+            json.dump(results_data, f, indent=2)
+
+        sys.exit(result)
+        EOF
