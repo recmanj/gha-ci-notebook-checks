@@ -3,27 +3,35 @@
 DOI Checker for Jupyter Notebooks
 
 Checks if notebooks that use datasets with DOI metadata properly cite those DOIs (Criterion 1.2.5).
+
+Usage:
+    python doi_checker.py notebook1.ipynb notebook2.ipynb ...
 """
 
-import argparse
 import json
 import re
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from utils import read_notebook, extract_cell_source, write_results
+
+def read_notebook(notebook_path: str) -> dict:
+    """Read and parse a Jupyter notebook file."""
+    with open(notebook_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def extract_cell_source(cell: dict) -> str:
+    """Extract source code/markdown from a cell as a single string."""
+    source = cell.get('source', [])
+    if isinstance(source, list):
+        return ''.join(source)
+    return str(source)
 
 
 def check_doi(notebook_path: str) -> str:
     """
     Check for DOI citations in a notebook.
 
-    Args:
-        notebook_path: Path to the notebook file
-
-    Returns:
-        Result status: "success", "failure", or "skipped"
+    Returns: "success", "failure", or "skipped"
     """
     # DOI regex patterns
     doi_patterns = [
@@ -35,7 +43,11 @@ def check_doi(notebook_path: str) -> str:
     # Metadata fields that might contain DOI references
     metadata_fields = ['references', 'citation', 'doi', 'reference', 'Attributes']
 
-    nb_data = read_notebook(notebook_path)
+    try:
+        nb_data = read_notebook(notebook_path)
+    except Exception as e:
+        print(f"❌ Error reading {notebook_path}: {e}")
+        return "failure"
 
     # First, check if dataset metadata contains DOI references
     has_dataset_doi_metadata = False
@@ -48,9 +60,7 @@ def check_doi(notebook_path: str) -> str:
                     text = output['text']
                     if isinstance(text, list):
                         text = ''.join(text)
-                    # Check if this looks like xarray/dataset output with metadata
                     if any(field in text for field in metadata_fields):
-                        # Check if metadata contains DOI patterns
                         for pattern in doi_patterns:
                             if re.search(pattern, text, re.IGNORECASE):
                                 has_dataset_doi_metadata = True
@@ -75,24 +85,21 @@ def check_doi(notebook_path: str) -> str:
             break
 
     if not has_dataset_doi_metadata:
-        print(f"INFO: No dataset DOI metadata found in {notebook_path}, skipping DOI check")
+        print(f"⏭️  No dataset DOI metadata found in {notebook_path}, skipping")
         return "skipped"
 
     found_dois = set()
 
     # Search in all cells for DOI citations
     for cell in nb_data.get('cells', []):
-        # Check markdown cells
         if cell.get('cell_type') == 'markdown':
             source = extract_cell_source(cell)
             for pattern in doi_patterns:
                 matches = re.findall(pattern, source, re.IGNORECASE)
                 found_dois.update(matches)
 
-        # Check code cell outputs
         if cell.get('cell_type') == 'code':
             for output in cell.get('outputs', []):
-                # Check text outputs
                 if 'text' in output:
                     text = output['text']
                     if isinstance(text, list):
@@ -101,7 +108,6 @@ def check_doi(notebook_path: str) -> str:
                         matches = re.findall(pattern, text, re.IGNORECASE)
                         found_dois.update(matches)
 
-                # Check data outputs (HTML, plain text, etc.)
                 data = output.get('data', {})
                 for key, value in data.items():
                     if isinstance(value, (str, list)):
@@ -116,45 +122,28 @@ def check_doi(notebook_path: str) -> str:
     valid_dois = [doi for doi in found_dois if valid_doi_pattern.match(doi)]
 
     if not valid_dois:
-        print(f"ERROR: No valid DOI found in {notebook_path}")
-        print("  Notebook uses dataset with DOI metadata but doesn't cite the DOI")
-        print("  Please add DOI citation in markdown or ensure dataset metadata is visible")
-        print("  Expected format: 10.xxxx/xxxxx")
+        print(f"❌ {notebook_path}: Uses dataset with DOI metadata but doesn't cite the DOI")
+        print("   Add DOI citation in markdown (format: 10.xxxx/xxxxx)")
         return "failure"
     else:
-        print(f"Found {len(valid_dois)} valid DOI(s) in {notebook_path}:")
+        print(f"✅ {notebook_path}: Found {len(valid_dois)} valid DOI(s)")
         for doi in sorted(valid_dois):
-            print(f"  - {doi}")
+            print(f"   - {doi}")
         return "success"
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Check for DOI citations in notebooks')
-    parser.add_argument('--notebooks', required=True, help='JSON array of notebook paths')
-    parser.add_argument('--output-dir', required=True, help='Directory to write results')
-    args = parser.parse_args()
-
-    try:
-        notebooks = json.loads(args.notebooks)
-    except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON format for notebooks: {e}")
+    if len(sys.argv) < 2:
+        print("Usage: doi_checker.py <notebook1.ipynb> [notebook2.ipynb ...]")
         sys.exit(1)
 
-    notebook_results = {}
+    notebooks = [nb for nb in sys.argv[1:] if nb.strip()]
     overall_result = 0
 
     for notebook in notebooks:
-        if not notebook:
-            continue
-
-        print(f"Processing {notebook} with doi_checker")
         result = check_doi(notebook)
-        notebook_results[notebook] = result
-
         if result == "failure":
             overall_result = 1
-
-    write_results("doi_checker", notebook_results, args.output_dir)
 
     sys.exit(overall_result)
 

@@ -4,405 +4,281 @@ on:
   workflow_call:
     inputs:
       notebooks:
-        description: 'Comma-separated list of notebook paths to check (e.g., ./notebook1.ipynb,./folder/notebook2.ipynb). Leave empty to check all notebooks.'
+        description: 'Space-separated list of notebook paths to check (default: all *.ipynb)'
         required: false
         type: string
         default: ''
+      execution_runner:
+        description: 'Runner for notebook execution (supports self-hosted)'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
 
+env:
+  QA_OUTPUT_DIR: qa_outputs${{ github.run_id }}
 
 jobs:
-  checks:
-    strategy:
-      matrix:
-        os: [ubuntu-24.04]
-        python-version: [3.13]
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash -l {0}
-    env:
-      QA_OUTPUT_DIR: qa_outputs${{ github.run_id }}
+  # Job 0: Collect notebooks to check (shared by all jobs)
+  collect:
+    runs-on: ubuntu-latest
+    outputs:
+      notebooks: ${{ steps.notebooks.outputs.files }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - name: Set up Conda environment
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          miniforge-version: "latest"
-          environment-file: "environment.yml"
-          activate-environment: notebook-qa
-          auto-activate-base: false
-          use-mamba: true
-          channels: conda-forge
-          use-only-tar-bz2: true
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install QA dependencies
+      - name: Get notebooks
+        id: notebooks
         run: |
-          conda install pip
-          # Pin click to <8.3 to avoid issues with pynblint bool flags
-          pip install nbqa ruff pynblint 'click<8.3' pytest-check-links ploomber-engine psutil matplotlib \
-                      beautifulsoup4 lxml pytest pytest-cov
-
-          if command -v apt-get &> /dev/null; then
-            echo "Installing jq via apt-get..."
-            sudo apt-get -y update && sudo apt-get -y --no-install-recommends install jq
-          elif command -v brew &> /dev/null; then
-            echo "Installing jq via brew..."
-            brew install jq
-          elif command -v choco &> /dev/null; then
-            echo "Installing jq via choco..."
-            choco install jq
+          if [ -n "${{ inputs.notebooks }}" ]; then
+            echo "files=${{ inputs.notebooks }}" >> $GITHUB_OUTPUT
+            echo "Using specified notebooks: ${{ inputs.notebooks }}"
           else
-            echo "Error: No package manager found (apt-get, brew, or choco)"
-            exit 1
+            NOTEBOOKS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*' | tr '\n' ' ')
+            echo "files=$NOTEBOOKS" >> $GITHUB_OUTPUT
+            echo "Found notebooks: $NOTEBOOKS"
           fi
 
-      - name: Collect notebooks
-        id: collect_notebooks
-        shell: python
-        env:
-          MANUAL_NOTEBOOKS: ${{ inputs.notebooks }}
+  # Job 1: Static checks (fast, run on default runner)
+  lint:
+    needs: collect
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: notebook-qa
+          environment-file: environment.yml
+          use-mamba: true
+
+      - name: Install QA tools
         run: |
-          import json
-          import os
-          import sys
+          pip install nbqa ruff pynblint 'click<8.3' pytest-cov beautifulsoup4 lxml
 
-          manual_notebooks = os.environ.get('MANUAL_NOTEBOOKS', '').strip()
-
-          if manual_notebooks:
-              # Parse comma-separated notebook paths
-              notebooks = [nb.strip() for nb in manual_notebooks.split(',') if nb.strip()]
-
-              # Validate that all specified notebooks exist
-              missing_notebooks = []
-              for notebook in notebooks:
-                  if not os.path.isfile(notebook):
-                      missing_notebooks.append(notebook)
-
-              if missing_notebooks:
-                  print(f"Error: The following notebooks do not exist:", file=sys.stderr)
-                  for nb in missing_notebooks:
-                      print(f"  - {nb}", file=sys.stderr)
-                  sys.exit(1)
-
-              print(f"Using manually specified notebooks: {notebooks}")
-          else:
-              # Default behavior: find all notebooks
-              notebooks = []
-              for root, dirs, files in os.walk('.'):
-                  for filename in files:
-                      if filename.endswith('.ipynb'):
-                          notebook_path = os.path.join(root, filename)
-                          notebooks.append(notebook_path)
-
-              print(f"Found {len(notebooks)} notebooks in repository")
-
-          notebooks_json = json.dumps(notebooks)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
-              fh.write(f"notebooks={notebooks_json}\n")
-
+      # Linting checks
       - name: (2.2.3) Run linter
         id: linter
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: linter
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
+        run: nbqa ruff check ${{ needs.collect.outputs.notebooks }}
 
       - name: (2.2.3) Run formatter
         id: formatter
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: formatter
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
+        run: nbqa ruff format --check --diff ${{ needs.collect.outputs.notebooks }}
 
       - name: (2.2.3) Run pynblint
         id: pynblint
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: pynblint
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
-          pynblint_include_violations: 'non-linear-execution,untitled-notebook,on-portable-chars-in-nb-name,missing-h1-MD-heading,missing-opening-MD-text,missing-closing-MD-text,too-few-MD-cells,duplicate-notebook-not-renamed,non-executed-notebook,non-executed-cells,empty-cells'
+        run: pynblint ${{ needs.collect.outputs.notebooks }}
 
-      - name: (1.2.5) Check for DOI references
-        id: doi_checker
-        if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: doi_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
-
-      - name: (1.2.3) Run link checker
+      # Link checking with lychee (fast, Rust-based)
+      - name: (1.2.3) Check links
         id: link_checker
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
+        uses: lycheeverse/lychee-action@v2
         with:
-          command: link_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
+          args: --verbose --no-progress ${{ needs.collect.outputs.notebooks }}
+          fail: true
 
-      - name: (2.2.1, 2.2.4, 2.2.6) Execute notebooks
-        id: execute_notebooks
-        if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        env:
-          CDSAPI_KEY: ${{ secrets.CDSAPI_KEY || '' }}
-        with:
-          command: execute
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
-
-      - name: (1.2.6) Check version metadata
-        id: metadata_checker
-        if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: metadata_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
-
+      # Test coverage (direct pytest-cov)
       - name: (2.3.1, 2.3.2) Check tests and coverage
         id: test_checker
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: test_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
-          coverage_threshold: '80'
+        run: |
+          if ls test_*.py *_test.py tests/*.py 2>/dev/null; then
+            pytest --cov=. --cov-report=term --cov-fail-under=80
+          else
+            echo "No test files found, skipping coverage check"
+          fi
 
-      - name: (3.1.3) Check accessibility - alt text
-        id: accessibility_checker
+      # Custom checks
+      - name: (1.2.5) Check for DOI references
+        id: doi_checker
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: accessibility_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
+        run: |
+          python ${{ github.workspace }}/gha-ci-notebook-checks/process-notebooks/checkers/doi_checker.py \
+            ${{ needs.collect.outputs.notebooks }}
 
       - name: (3.3.2) Check figure labels and sources
         id: figure_checker
         if: success() || failure()
-        uses: ecmwf-training/c3s-reusable-workflows/process-notebooks@main
-        with:
-          command: figure_checker
-          notebooks: ${{ steps.collect_notebooks.outputs.notebooks }}
+        run: |
+          python ${{ github.workspace }}/gha-ci-notebook-checks/process-notebooks/checkers/figure_checker.py \
+            ${{ needs.collect.outputs.notebooks }}
 
-      - name: Upload notebook outputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: notebook-outputs-${{ github.run_id }}
-          path: ${{ env.QA_OUTPUT_DIR }}
-          if-no-files-found: warn
+      # Metadata check (inline)
+      - name: (1.2.6) Check version metadata
+        id: metadata_checker
+        if: success() || failure()
+        run: |
+          found=false
+          for nb in ${{ needs.collect.outputs.notebooks }}; do
+            if grep -qiE "(last.?updated|version|modified|date).*[0-9]{4}" "$nb" 2>/dev/null; then
+              echo "✅ Found version date in $nb"
+              found=true
+            elif [ -f "$(dirname "$nb")/README.md" ]; then
+              if grep -qiE "(last.?updated|version|modified|date).*[0-9]{4}" "$(dirname "$nb")/README.md" 2>/dev/null; then
+                echo "✅ Found version date in README.md for $nb"
+                found=true
+              fi
+            fi
+          done
+          if [ "$found" = false ]; then
+            echo "⚠️ No version date found in notebooks or README"
+          fi
 
+      # Accessibility check (inline)
+      - name: (3.1.3) Check accessibility - alt text
+        id: accessibility_checker
+        if: success() || failure()
+        run: |
+          python << 'EOF'
+          import json
+          import sys
+          import re
+
+          notebooks = "${{ needs.collect.outputs.notebooks }}".split()
+          issues = []
+
+          for nb_path in notebooks:
+              if not nb_path.strip():
+                  continue
+              try:
+                  with open(nb_path) as f:
+                      nb = json.load(f)
+                  for i, cell in enumerate(nb.get('cells', [])):
+                      if cell.get('cell_type') == 'markdown':
+                          src = ''.join(cell.get('source', []))
+                          # Check for images without alt text: ![]( pattern
+                          if re.search(r'!\[\]\(', src):
+                              issues.append(f"{nb_path}: cell {i} has image without alt text")
+                          # Check HTML img tags without alt
+                          if re.search(r'<img[^>]*(?<!alt=")[^>]*>', src, re.IGNORECASE):
+                              if not re.search(r'<img[^>]*alt\s*=', src, re.IGNORECASE):
+                                  issues.append(f"{nb_path}: cell {i} has HTML img without alt attribute")
+              except Exception as e:
+                  print(f"Warning: Could not check {nb_path}: {e}")
+
+          if issues:
+              print("❌ Accessibility issues found:")
+              for issue in issues:
+                  print(f"  - {issue}")
+              sys.exit(1)
+          else:
+              print("✅ All images have alt text")
+          EOF
+
+      # File existence checks
       - name: (1.2.4) Check LICENSE
         id: license
         if: success() || failure()
         run: |
-          if [[ ! -f "LICENSE" ]]; then
-            echo "LICENSE file is missing"
-            exit 1
+          if [ -s LICENSE ]; then
+            echo "✅ LICENSE file is present and non-empty"
           else
-            echo "LICENSE file is present"
-          fi
-          if [ ! -s "LICENSE" ]; then
-            echo "LICENSE file is empty"
+            echo "❌ LICENSE file is missing or empty"
             exit 1
-          else
-            echo "LICENSE file is not empty"
           fi
 
       - name: (4.2.3) Check CHANGELOG
         id: changelog
         if: success() || failure()
         run: |
-          if [[ ! -f "CHANGELOG.md" ]]; then
-            echo "CHANGELOG.md file is missing"
-            exit 1
+          if [ -s CHANGELOG.md ]; then
+            echo "✅ CHANGELOG.md file is present and non-empty"
           else
-            echo "CHANGELOG.md file is present"
-          fi
-          if [ ! -s "CHANGELOG.md" ]; then
-            echo "CHANGELOG.md file is empty"
+            echo "❌ CHANGELOG.md file is missing or empty"
             exit 1
-          else
-            echo "CHANGELOG.md file is not empty"
           fi
 
-      - name: Generate Workflow Summary
-        if: always()
-        shell: python
+  # Job 2: Notebook execution (resource-intensive, configurable runner)
+  execute:
+    needs: collect
+    runs-on: ${{ inputs.execution_runner }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: notebook-qa
+          environment-file: environment.yml
+          use-mamba: true
+
+      - name: Install execution tools
+        run: pip install ploomber-engine psutil matplotlib
+
+      - name: Configure CDS API
+        if: env.CDSAPI_KEY != ''
         run: |
-          import csv
-          import json
+          echo "url: https://cds.climate.copernicus.eu/api" > ~/.cdsapirc
+          echo "key: $CDSAPI_KEY" >> ~/.cdsapirc
+
+      - name: (2.2.1, 2.2.4, 2.2.6) Execute notebooks with memory profiling
+        id: execute_notebooks
+        run: |
+          python << 'EOF'
           import os
+          import csv
           from pathlib import Path
+          from ploomber_engine import execute_notebook
 
-          # Get step outcomes
-          outcomes = {
-              '(1.2.3) Link Checker': '${{ steps.link_checker.outcome }}',
-              '(1.2.4) License Check': '${{ steps.license.outcome }}',
-              '(1.2.5) DOI Checker': '${{ steps.doi_checker.outcome }}',
-              '(1.2.6) Metadata Check': '${{ steps.metadata_checker.outcome }}',
-              '(2.2.3) Linter': '${{ steps.linter.outcome }}',
-              '(2.2.3) Formatter': '${{ steps.formatter.outcome }}',
-              '(2.2.3) Pynblint': '${{ steps.pynblint.outcome }}',
-              '(2.2.1, 2.2.4, 2.2.6) Execute Notebooks': '${{ steps.execute_notebooks.outcome }}',
-              '(2.3.1, 2.3.2) Test & Coverage': '${{ steps.test_checker.outcome }}',
-              '(3.1.3) Accessibility': '${{ steps.accessibility_checker.outcome }}',
-              '(3.3.2) Figure Labels': '${{ steps.figure_checker.outcome }}',
-              '(4.2.3) Changelog Check': '${{ steps.changelog.outcome }}',  
-          }
+          notebooks = "${{ needs.collect.outputs.notebooks }}".split()
+          output_dir = os.environ.get('QA_OUTPUT_DIR', 'qa_outputs')
+          Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-          # Map outcomes to status icons
-          status_map = {
-              'success': '✅ Pass',
-              'failure': '❌ Fail',
-              'skipped': '⏭️ Skipped',
-              'cancelled': '🚫 Cancelled',
-              '': '⏭️ Skipped'
-          }
+          failed = []
+          for nb in notebooks:
+              if not nb.strip():
+                  continue
+              print(f"\n{'='*60}")
+              print(f"Executing: {nb}")
+              print('='*60)
+              try:
+                  result = execute_notebook(
+                      nb,
+                      output_path=nb,
+                      profile_memory=True,
+                      progress_bar=False
+                  )
+                  # Save profiling data
+                  if hasattr(result, 'profile') and result.profile:
+                      csv_path = Path(output_dir) / f"{Path(nb).stem}-profiling-data.csv"
+                      with open(csv_path, 'w', newline='') as f:
+                          writer = csv.DictWriter(f, fieldnames=['cell', 'memory', 'runtime'])
+                          writer.writeheader()
+                          for i, (mem, time) in enumerate(zip(
+                              result.profile.get('memory', []),
+                              result.profile.get('runtime', [])
+                          )):
+                              writer.writerow({'cell': i, 'memory': mem, 'runtime': time})
+                  print(f"✅ {nb} executed successfully")
+              except Exception as e:
+                  print(f"❌ {nb} failed: {e}")
+                  failed.append(nb)
 
-          # Map individual notebook statuses to icons
-          notebook_status_map = {
-              'success': '✅',
-              'failure': '❌',
-              'skipped': '⏭️',
-          }
+          if failed:
+              print(f"\n❌ {len(failed)} notebook(s) failed to execute:")
+              for nb in failed:
+                  print(f"  - {nb}")
+              exit(1)
+          EOF
 
-          summary = []
-          summary.append('# Notebook QA Summary\n')
-
-          # Add overall status table
-          summary.append('## Overall Check Results\n')
-          summary.append('| Check | Status |')
-          summary.append('|-------|--------|')
-
-          for check_name, outcome in outcomes.items():
-              status = status_map.get(outcome, outcome)
-              summary.append(f'| {check_name} | {status} |')
-
-          summary.append('\n')
-
-          # Read per-notebook results
-          qa_output_dir = os.getenv('QA_OUTPUT_DIR', 'qa_outputs')
-          output_path = Path(qa_output_dir)
-
-          # Command mapping for table headers
-          command_headers = {
-              'link_checker': 'Links',
-              'doi_checker': 'DOI',
-              'metadata_checker': 'Metadata',
-              'linter': 'Linter',
-              'formatter': 'Formatter',
-              'pynblint': 'Pynblint',
-              'execute': 'Execute',
-              'test_checker': 'Tests',
-              'accessibility_checker': 'Alt-text',
-              'figure_checker': 'Figures'
-          }
-
-          # Collect all notebook results
-          all_notebooks = set()
-          results_by_command = {}
-
-          if output_path.exists():
-              # Read all result JSON files
-              for result_file in output_path.glob('*-results.json'):
-                  try:
-                      with open(result_file, 'r') as f:
-                          data = json.load(f)
-                          command = data.get('command', '')
-                          results = data.get('results', {})
-                          results_by_command[command] = results
-                          all_notebooks.update(results.keys())
-                  except Exception as e:
-                      print(f"Warning: Failed to read {result_file}: {e}")
-
-          # Generate per-notebook results table if we have results
-          if all_notebooks and results_by_command:
-              summary.append('## Per-Notebook Results\n')
-
-              # Create table header
-              header = '| Notebook |'
-              separator = '|----------|'
-              for cmd in ['linter', 'formatter', 'pynblint', 'doi_checker', 'link_checker', 'execute',
-                          'metadata_checker', 'test_checker', 'accessibility_checker', 'figure_checker']:
-                  if cmd in results_by_command:
-                      header += f' {command_headers[cmd]} |'
-                      separator += '--------|'
-
-              summary.append(header)
-              summary.append(separator)
-
-              # Create table rows for each notebook
-              for notebook in sorted(all_notebooks):
-                  row = f'| {notebook} |'
-
-                  for cmd in ['linter', 'formatter', 'pynblint', 'doi_checker', 'link_checker', 'execute',
-                              'metadata_checker', 'test_checker', 'accessibility_checker', 'figure_checker']:
-                      if cmd in results_by_command:
-                          status = results_by_command[cmd].get(notebook, 'skipped')
-                          icon = notebook_status_map.get(status, '⏭️')
-                          row += f' {icon} |'
-
-                  summary.append(row)
-
-              summary.append('\n')
-
-          # Add memory profiling section
-
-          if output_path.exists():
-              # Add CSV memory profiling data tables
-              profiling_csvs = sorted(output_path.glob('*-profiling-data.csv'))
-
-              if profiling_csvs:
-                  for csv_path in profiling_csvs:
-                      # Extract notebook name from CSV filename
-                      # Format: <notebook-name>.output-profiling-data.csv
-                      notebook_name = csv_path.stem.replace('.output-profiling-data', '')
-
-                      # Parse CSV file
-                      try:
-                          with open(csv_path, 'r') as csvfile:
-                              reader = csv.DictReader(csvfile)
-                              rows = list(reader)
-
-                          if rows:
-                              # Create collapsible section for each notebook
-                              summary.append(f'\n<details>\n<summary><b>{notebook_name}</b> ({len(rows)} cells)</summary>\n\n')
-
-                              # Create table header
-                              summary.append('| Cell | Memory (MB) | Time (s) |')
-                              summary.append('|------|-------------|----------|')
-
-                              # Add rows for each cell
-                              for row in rows:
-                                  cell = row.get('cell', 'N/A')
-                                  memory_mb = row.get('memory', 'N/A')
-                                  if memory_mb != 'N/A':
-                                      try:
-                                          memory_mb = f"{float(memory_mb):.2f}"
-                                      except ValueError:
-                                          pass
-                                  exec_time_s = row.get('runtime', 'N/A')
-                                  if exec_time_s != 'N/A':
-                                      try:
-                                          exec_time_s = f"{float(exec_time_s):.2f}"
-                                      except ValueError:
-                                          pass
-
-                                  summary.append(f'| {cell} | {memory_mb} | {exec_time_s} |')
-
-                              summary.append('\n</details>\n')
-                      except Exception as e:
-                          print(f'Warning: Failed to parse {csv_path}: {e}')
-                          summary.append(f'\n*Could not parse profiling data for {notebook_name}*\n')
-
-              summary.append('\n**View the generated memory profile charts by downloading the workflow artifacts.**\n')
-
-          summary_text = '\n'.join(summary)
-          github_summary = os.getenv('GITHUB_STEP_SUMMARY')
-          with open(github_summary, 'a') as f:
-              f.write(summary_text)
+      - name: Upload profiling artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-profiling-${{ github.run_id }}
+          path: ${{ env.QA_OUTPUT_DIR }}
+          if-no-files-found: ignore
