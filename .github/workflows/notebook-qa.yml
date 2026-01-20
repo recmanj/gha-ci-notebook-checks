@@ -144,21 +144,8 @@ jobs:
         id: metadata_checker
         if: success() || failure()
         run: |
-          found=false
-          for nb in ${{ needs.collect.outputs.notebooks }}; do
-            if date_match=$(grep -oiE "(last.?updated|version|modified|date).*[0-9]{4}" "$nb" 2>/dev/null | head -1); then
-              echo "✅ Found version date in $nb: $date_match"
-              found=true
-            elif [ -f "$(dirname "$nb")/README.md" ]; then
-              if date_match=$(grep -oiE "(last.?updated|version|modified|date).*[0-9]{4}" "$(dirname "$nb")/README.md" 2>/dev/null | head -1); then
-                echo "✅ Found version date in README.md for $nb: $date_match"
-                found=true
-              fi
-            fi
-          done
-          if [ "$found" = false ]; then
-            echo "⚠️ No version date found in notebooks or README"
-          fi
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/metadata_checker.py \
+            ${{ needs.collect.outputs.notebooks }}
 
       # Accessibility check
       - name: (3.1.3) Check accessibility - alt text
