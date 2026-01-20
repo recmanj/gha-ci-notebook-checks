@@ -74,7 +74,7 @@ jobs:
       - name: (2.2.3) Run pynblint
         id: pynblint
         if: success() || failure()
-        run: pynblint ${{ needs.collect.outputs.notebooks }}
+        run: echo ${{ needs.collect.outputs.notebooks }} | xargs -n 1 pynblint
 
       # Link checking with lychee (fast, Rust-based)
       - name: (1.2.3) Check links
