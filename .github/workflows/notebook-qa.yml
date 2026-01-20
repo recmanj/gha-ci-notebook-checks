@@ -64,12 +64,12 @@ jobs:
       - name: (2.2.3) Run linter
         id: linter
         if: success() || failure()
-        run: nbqa ruff check ${{ needs.collect.outputs.notebooks }}
+        run: nbqa "ruff check" ${{ needs.collect.outputs.notebooks }}
 
       - name: (2.2.3) Run formatter
         id: formatter
         if: success() || failure()
-        run: nbqa ruff format --check --diff ${{ needs.collect.outputs.notebooks }}
+        run: nbqa "ruff format --check --diff" ${{ needs.collect.outputs.notebooks }}
 
       - name: (2.2.3) Run pynblint
         id: pynblint
