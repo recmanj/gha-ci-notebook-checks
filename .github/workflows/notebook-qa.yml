@@ -64,25 +64,74 @@ jobs:
 
       - name: Install QA tools
         run: |
-          pip install nbqa ruff pynblint 'click<8.3' pytest-cov beautifulsoup4 lxml
+          pip install nbqa ruff pynblint 'click<8.3' pytest-cov beautifulsoup4 lxml pyyaml
+
+      # Load QA configuration
+      - name: Load QA config
+        id: config
+        run: |
+          python << 'EOF'
+          import yaml
+          import os
+          from fnmatch import fnmatch
+
+          config_path = '.github/notebook-qa.yml'
+          all_notebooks = "${{ needs.collect.outputs.notebooks }}".split()
+          config = {}
+
+          if os.path.exists(config_path):
+              with open(config_path) as f:
+                  config = yaml.safe_load(f) or {}
+
+          disabled = config.get('disabled_checks', [])
+          skip_notebooks = config.get('skip_notebooks', [])
+          per_notebook = config.get('notebooks', {})
+
+          def filter_for_check(check_id, notebooks):
+              """Filter notebook list for a specific check."""
+              result = []
+              for nb in notebooks:
+                  # Skip if notebook matches skip_notebooks patterns
+                  if any(fnmatch(nb, pat) for pat in skip_notebooks):
+                      continue
+                  # Skip if per-notebook config says skip this check
+                  skip_this = False
+                  for pattern, settings in per_notebook.items():
+                      if fnmatch(nb, pattern):
+                          if check_id in settings.get('skip', []):
+                              skip_this = True
+                              break
+                  if not skip_this:
+                      result.append(nb)
+              return result
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              for check in ['linter', 'formatter', 'pynblint', 'links', 'tests',
+                            'doi', 'figures', 'metadata', 'accessibility', 'license', 'changelog']:
+                  # Global skip flag
+                  out.write(f"skip_{check}={'true' if check in disabled else 'false'}\n")
+                  # Filtered notebook list for this check
+                  filtered = filter_for_check(check, all_notebooks)
+                  out.write(f"notebooks_{check}={' '.join(filtered)}\n")
+          EOF
 
       # Linting checks
       - name: (2.2.3) Run linter
         id: linter
-        if: success() || failure()
-        run: nbqa "ruff check" ${{ needs.collect.outputs.notebooks }}
+        if: (success() || failure()) && steps.config.outputs.skip_linter != 'true' && steps.config.outputs.notebooks_linter != ''
+        run: nbqa "ruff check" ${{ steps.config.outputs.notebooks_linter }}
 
       - name: (2.2.3) Run formatter
         id: formatter
-        if: success() || failure()
-        run: nbqa "ruff format --check --diff" ${{ needs.collect.outputs.notebooks }}
+        if: (success() || failure()) && steps.config.outputs.skip_formatter != 'true' && steps.config.outputs.notebooks_formatter != ''
+        run: nbqa "ruff format --check --diff" ${{ steps.config.outputs.notebooks_formatter }}
 
       - name: (2.2.3) Run pynblint
         id: pynblint
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_pynblint != 'true' && steps.config.outputs.notebooks_pynblint != ''
         run: |
           failed=0
-          for nb in ${{ needs.collect.outputs.notebooks }}; do
+          for nb in ${{ steps.config.outputs.notebooks_pynblint }}; do
             echo "Checking: $nb"
             output_file="/tmp/pynblint_$(basename "$nb" .ipynb).json"
             pynblint "$nb" -o "$output_file"
@@ -107,16 +156,16 @@ jobs:
       # Link checking with lychee (fast, Rust-based)
       - name: (1.2.3) Check links
         id: link_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_links != 'true' && steps.config.outputs.notebooks_links != ''
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --verbose --no-progress ${{ needs.collect.outputs.notebooks }}
+          args: --verbose --no-progress ${{ steps.config.outputs.notebooks_links }}
           fail: true
 
       # Test coverage (direct pytest-cov)
       - name: (2.3.1, 2.3.2) Check tests and coverage
         id: test_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_tests != 'true'
         run: |
           if ls test_*.py *_test.py tests/*.py 2>/dev/null; then
             pytest --cov=. --cov-report=term --cov-fail-under=80
@@ -127,38 +176,41 @@ jobs:
       # Custom checks
       - name: (1.2.5) Check for DOI references
         id: doi_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_doi != 'true' && steps.config.outputs.notebooks_doi != ''
         run: |
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/doi_checker.py \
-            ${{ needs.collect.outputs.notebooks }}
+            --config .github/notebook-qa.yml \
+            ${{ steps.config.outputs.notebooks_doi }}
 
       - name: (3.3.2) Check figure labels and sources
         id: figure_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_figures != 'true' && steps.config.outputs.notebooks_figures != ''
         run: |
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/figure_checker.py \
-            ${{ needs.collect.outputs.notebooks }}
+            --config .github/notebook-qa.yml \
+            ${{ steps.config.outputs.notebooks_figures }}
 
       # Metadata version check
       - name: (1.2.6) Check version metadata
         id: metadata_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_metadata != 'true' && steps.config.outputs.notebooks_metadata != ''
         run: |
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/metadata_checker.py \
-            ${{ needs.collect.outputs.notebooks }}
+            --config .github/notebook-qa.yml \
+            ${{ steps.config.outputs.notebooks_metadata }}
 
       # Accessibility check
       - name: (3.1.3) Check accessibility
         id: accessibility_checker
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_accessibility != 'true' && steps.config.outputs.notebooks_accessibility != ''
         uses: berkeley-dsep-infra/jupyterlab-a11y-checker@c77482165508460d671cdad6ecdff5ac72ab6063
         with:
-          files: ${{ needs.collect.outputs.notebooks }}
+          files: ${{ steps.config.outputs.notebooks_accessibility }}
 
       # File existence checks
       - name: (1.2.4) Check LICENSE
         id: license
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_license != 'true'
         run: |
           if [ -s LICENSE ]; then
             echo "✅ LICENSE file is present and non-empty"
@@ -169,7 +221,7 @@ jobs:
 
       - name: (4.2.3) Check CHANGELOG
         id: changelog
-        if: success() || failure()
+        if: (success() || failure()) && steps.config.outputs.skip_changelog != 'true'
         run: |
           if [ -s CHANGELOG.md ]; then
             echo "✅ CHANGELOG.md file is present and non-empty"
@@ -190,7 +242,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Load QA config to check if execute is disabled
+      - name: Load QA config
+        id: config
+        run: |
+          python3 << 'EOF'
+          import os
+          from fnmatch import fnmatch
+
+          # Try to load YAML, fall back to empty config if not available
+          try:
+              import yaml
+              HAS_YAML = True
+          except ImportError:
+              HAS_YAML = False
+
+          config_path = '.github/notebook-qa.yml'
+          all_notebooks = "${{ needs.collect.outputs.notebooks }}".split()
+          config = {}
+
+          if HAS_YAML and os.path.exists(config_path):
+              with open(config_path) as f:
+                  config = yaml.safe_load(f) or {}
+
+          disabled = config.get('disabled_checks', [])
+          skip_notebooks = config.get('skip_notebooks', [])
+          per_notebook = config.get('notebooks', {})
+
+          def filter_for_check(check_id, notebooks):
+              """Filter notebook list for a specific check."""
+              result = []
+              for nb in notebooks:
+                  # Skip if notebook matches skip_notebooks patterns
+                  if any(fnmatch(nb, pat) for pat in skip_notebooks):
+                      continue
+                  # Skip if per-notebook config says skip this check
+                  skip_this = False
+                  for pattern, settings in per_notebook.items():
+                      if fnmatch(nb, pattern):
+                          if check_id in settings.get('skip', []):
+                              skip_this = True
+                              break
+                  if not skip_this:
+                      result.append(nb)
+              return result
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              # Global skip flag for execute
+              out.write(f"skip_execute={'true' if 'execute' in disabled else 'false'}\n")
+              # Filtered notebook list for execute
+              filtered = filter_for_check('execute', all_notebooks)
+              out.write(f"notebooks_execute={' '.join(filtered)}\n")
+          EOF
+
+      - name: Skip execution check
+        if: steps.config.outputs.skip_execute == 'true' || steps.config.outputs.notebooks_execute == ''
+        run: echo "Notebook execution skipped by configuration"
+
       - name: Set up Conda
+        if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != ''
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
@@ -199,16 +309,18 @@ jobs:
           use-mamba: true
 
       - name: Install execution tools
-        run: pip install ploomber-engine psutil matplotlib
+        if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != ''
+        run: pip install ploomber-engine psutil matplotlib pyyaml
 
       - name: Configure CDS API
-        if: env.CDSAPI_KEY != ''
+        if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != '' && env.CDSAPI_KEY != ''
         run: |
           echo "url: https://cds.climate.copernicus.eu/api" > ~/.cdsapirc
           echo "key: $CDSAPI_KEY" >> ~/.cdsapirc
 
       - name: (2.2.1, 2.2.4, 2.2.6) Execute notebooks with memory profiling
         id: execute_notebooks
+        if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != ''
         run: |
           python << 'EOF'
           import os
@@ -216,7 +328,7 @@ jobs:
           from pathlib import Path
           from ploomber_engine import execute_notebook
 
-          notebooks = "${{ needs.collect.outputs.notebooks }}".split()
+          notebooks = "${{ steps.config.outputs.notebooks_execute }}".split()
           output_dir = os.environ.get('QA_OUTPUT_DIR', 'qa_outputs')
           Path(output_dir).mkdir(parents=True, exist_ok=True)
 

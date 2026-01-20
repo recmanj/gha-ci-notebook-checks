@@ -8,13 +8,16 @@ Expected format in first markdown cell:
     **Last updated:** YYYY-MM-DD
 
 Usage:
-    python metadata_checker.py notebook1.ipynb notebook2.ipynb ...
+    python metadata_checker.py [--config CONFIG] notebook1.ipynb notebook2.ipynb ...
 """
 
+import argparse
 import json
 import re
 import sys
 from pathlib import Path
+
+from qa_config import load_config, filter_notebooks, is_check_disabled
 
 
 def read_notebook(notebook_path: str) -> dict:
@@ -84,11 +87,34 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: metadata_checker.py <notebook1.ipynb> [notebook2.ipynb ...]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='Check for Last updated metadata in Jupyter notebooks'
+    )
+    parser.add_argument(
+        'notebooks',
+        nargs='*',
+        help='Notebook files to check'
+    )
+    parser.add_argument(
+        '--config',
+        default='.github/notebook-qa.yml',
+        help='Path to QA configuration file (default: .github/notebook-qa.yml)'
+    )
+    args = parser.parse_args()
 
-    notebooks = [nb for nb in sys.argv[1:] if nb.strip()]
+    config = load_config(args.config)
+
+    # Check if metadata check is globally disabled
+    if is_check_disabled(config, 'metadata'):
+        print("Metadata check is disabled by configuration")
+        sys.exit(0)
+
+    # Filter notebooks based on config
+    notebooks = filter_notebooks(config, 'metadata', args.notebooks)
+
+    if not notebooks:
+        print("All notebooks skipped by configuration")
+        sys.exit(0)
 
     results = []
     for notebook in notebooks:
