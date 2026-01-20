@@ -51,7 +51,7 @@ jobs:
       - name: Checkout QA tools
         uses: actions/checkout@v4
         with:
-          repository: ecmwf-training/gha-ci-notebook-checks
+          repository: recmanj/gha-ci-notebook-checks
           path: .tmp/${{ github.run_id }}-qa-tools
 
       - name: Set up Conda
