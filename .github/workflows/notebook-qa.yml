@@ -64,7 +64,7 @@ jobs:
 
       - name: Install QA tools
         run: |
-          pip install nbqa ruff pynblint 'click<8.3' pytest-cov beautifulsoup4 lxml pyyaml
+          pip install nbqa ruff pynblint 'click<8.3' pytest-cov beautifulsoup4 lxml pyyaml requests
 
       # Load QA configuration
       - name: Load QA config

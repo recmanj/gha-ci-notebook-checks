@@ -12,6 +12,9 @@ import argparse
 import json
 import re
 import sys
+from typing import Optional
+
+import requests
 
 from qa_config import load_config, filter_notebooks, is_check_disabled
 
@@ -30,108 +33,169 @@ def extract_cell_source(cell: dict) -> str:
     return str(source)
 
 
+# DOI regex patterns - include both uppercase and lowercase letters
+DOI_PATTERNS = [
+    r'10\.\d{4,9}/[-._;()/:A-Za-z0-9]+',  # Standard DOI format
+    r'doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)',  # doi.org URLs
+    r'https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)'  # Full DOI URLs
+]
+
+# Pattern for validating DOI format
+VALID_DOI_PATTERN = re.compile(r'^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$', re.IGNORECASE)
+
+
+def validate_doi_resolves(doi: str, timeout: int = 10) -> Optional[bool]:
+    """
+    Check if a DOI resolves via doi.org.
+
+    Args:
+        doi: The DOI string to validate (e.g., "10.1234/example")
+        timeout: Request timeout in seconds
+
+    Returns:
+        True if DOI resolves (200, 301, 302 status)
+        False if DOI doesn't exist (404)
+        None if network error (can't verify)
+    """
+    try:
+        response = requests.head(
+            f"https://doi.org/{doi}",
+            allow_redirects=False,
+            timeout=timeout,
+            headers={'User-Agent': 'NotebookQA/1.0'}
+        )
+        return response.status_code in [200, 301, 302]
+    except requests.RequestException:
+        return None  # Network error, can't verify
+
+
+def extract_dois_from_text(text: str) -> set:
+    """Extract all DOIs from a text string."""
+    dois = set()
+    for pattern in DOI_PATTERNS:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        dois.update(matches)
+    return dois
+
+
 def check_doi(notebook_path: str) -> str:
     """
     Check for DOI citations in a notebook.
 
+    Validates that:
+    1. DOIs found in dataset metadata are syntactically valid
+    2. DOIs resolve via doi.org (exist in DOI registry)
+    3. Dataset DOIs are properly cited in markdown cells
+
     Returns: "success", "failure", or "skipped"
     """
-    # DOI regex patterns
-    doi_patterns = [
-        r'10\.\d{4,9}/[-._;()/:A-Z0-9]+',  # Standard DOI format
-        r'doi\.org/(10\.\d{4,9}/[-._;()/:A-Z0-9]+)',  # doi.org URLs
-        r'https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[-._;()/:A-Z0-9]+)'  # Full DOI URLs
-    ]
-
     # Metadata fields that might contain DOI references
     metadata_fields = ['references', 'citation', 'doi', 'reference', 'Attributes']
 
     try:
         nb_data = read_notebook(notebook_path)
     except Exception as e:
-        print(f"❌ Error reading {notebook_path}: {e}")
+        print(f"Error reading {notebook_path}: {e}")
         return "failure"
 
-    # First, check if dataset metadata contains DOI references
-    has_dataset_doi_metadata = False
+    # Step 1: Find DOIs in dataset metadata (code cell outputs)
+    dataset_dois = set()
 
     for cell in nb_data.get('cells', []):
-        if cell.get('cell_type') == 'code':
-            for output in cell.get('outputs', []):
-                # Check text outputs for dataset metadata with DOIs
-                if 'text' in output:
-                    text = output['text']
-                    if isinstance(text, list):
-                        text = ''.join(text)
-                    if any(field in text for field in metadata_fields):
-                        for pattern in doi_patterns:
-                            if re.search(pattern, text, re.IGNORECASE):
-                                has_dataset_doi_metadata = True
-                                break
+        if cell.get('cell_type') != 'code':
+            continue
 
-                # Check data outputs for metadata
-                data = output.get('data', {})
-                for key, value in data.items():
-                    if isinstance(value, (str, list)):
-                        if isinstance(value, list):
-                            value = ''.join(value)
-                        if any(field in value for field in metadata_fields):
-                            for pattern in doi_patterns:
-                                if re.search(pattern, value, re.IGNORECASE):
-                                    has_dataset_doi_metadata = True
-                                    break
+        for output in cell.get('outputs', []):
+            # Check text outputs for dataset metadata with DOIs
+            if 'text' in output:
+                text = output['text']
+                if isinstance(text, list):
+                    text = ''.join(text)
+                if any(field in text for field in metadata_fields):
+                    dataset_dois.update(extract_dois_from_text(text))
 
-                if has_dataset_doi_metadata:
-                    break
+            # Check data outputs for metadata
+            data = output.get('data', {})
+            for key, value in data.items():
+                if isinstance(value, (str, list)):
+                    if isinstance(value, list):
+                        value = ''.join(value)
+                    if any(field in value for field in metadata_fields):
+                        dataset_dois.update(extract_dois_from_text(value))
 
-        if has_dataset_doi_metadata:
-            break
+    # Filter to only valid DOI format
+    dataset_dois = {doi for doi in dataset_dois if VALID_DOI_PATTERN.match(doi)}
 
-    if not has_dataset_doi_metadata:
-        print(f"⏭️  No dataset DOI metadata found in {notebook_path}, skipping")
+    if not dataset_dois:
+        print(f"  No dataset DOI metadata found in {notebook_path}, skipping")
         return "skipped"
 
-    found_dois = set()
+    print(f"  Checking {notebook_path}")
+    print("    Dataset DOIs found in metadata:")
+    for doi in sorted(dataset_dois):
+        print(f"      - {doi}")
 
-    # Search in all cells for DOI citations
+    # Step 2: Find DOIs cited in markdown cells
+    cited_dois = set()
+
     for cell in nb_data.get('cells', []):
         if cell.get('cell_type') == 'markdown':
             source = extract_cell_source(cell)
-            for pattern in doi_patterns:
-                matches = re.findall(pattern, source, re.IGNORECASE)
-                found_dois.update(matches)
+            cited_dois.update(extract_dois_from_text(source))
 
-        if cell.get('cell_type') == 'code':
-            for output in cell.get('outputs', []):
-                if 'text' in output:
-                    text = output['text']
-                    if isinstance(text, list):
-                        text = ''.join(text)
-                    for pattern in doi_patterns:
-                        matches = re.findall(pattern, text, re.IGNORECASE)
-                        found_dois.update(matches)
+    # Filter to only valid DOI format
+    cited_dois = {doi for doi in cited_dois if VALID_DOI_PATTERN.match(doi)}
 
-                data = output.get('data', {})
-                for key, value in data.items():
-                    if isinstance(value, (str, list)):
-                        if isinstance(value, list):
-                            value = ''.join(value)
-                        for pattern in doi_patterns:
-                            matches = re.findall(pattern, value, re.IGNORECASE)
-                            found_dois.update(matches)
+    if cited_dois:
+        print("    DOIs cited in markdown:")
+        for doi in sorted(cited_dois):
+            print(f"      - {doi}")
+    else:
+        print("    DOIs cited in markdown: (none)")
 
-    # Validate DOI format
-    valid_doi_pattern = re.compile(r'^10\.\d{4,9}/[-._;()/:A-Z0-9]+$', re.IGNORECASE)
-    valid_dois = [doi for doi in found_dois if valid_doi_pattern.match(doi)]
+    # Step 3: Validate that dataset DOIs resolve via doi.org
+    failed = False
+    unresolved_dois = []
 
-    if not valid_dois:
-        print(f"❌ {notebook_path}: Uses dataset with DOI metadata but doesn't cite the DOI")
-        print("   Add DOI citation in markdown (format: 10.xxxx/xxxxx)")
+    print("    Validating DOIs resolve via doi.org...")
+    for doi in sorted(dataset_dois):
+        resolves = validate_doi_resolves(doi)
+        if resolves is True:
+            print(f"      {doi}: resolves")
+        elif resolves is False:
+            print(f"      {doi}: DOES NOT RESOLVE (404)")
+            unresolved_dois.append(doi)
+            failed = True
+        else:
+            print(f"      {doi}: could not verify (network error)")
+            # Don't fail on network errors - validation is best-effort
+
+    # Step 4: Check if dataset DOIs are cited in markdown
+    # Normalize DOIs for comparison (case-insensitive)
+    dataset_dois_lower = {doi.lower() for doi in dataset_dois}
+    cited_dois_lower = {doi.lower() for doi in cited_dois}
+
+    uncited_dois = dataset_dois_lower - cited_dois_lower
+
+    if uncited_dois:
+        print("    Dataset DOIs NOT cited in markdown:")
+        for doi in sorted(uncited_dois):
+            print(f"      - {doi}")
+        failed = True
+
+    # Final result
+    if failed:
+        if unresolved_dois:
+            print(f"  FAIL: {notebook_path}")
+            print(f"    - {len(unresolved_dois)} DOI(s) do not resolve")
+        if uncited_dois:
+            print(f"  FAIL: {notebook_path}")
+            print(f"    - {len(uncited_dois)} dataset DOI(s) not cited in markdown")
+            print("    Add DOI citation in markdown (e.g., https://doi.org/10.xxxx/xxxxx)")
         return "failure"
     else:
-        print(f"✅ {notebook_path}: Found {len(valid_dois)} valid DOI(s)")
-        for doi in sorted(valid_dois):
-            print(f"   - {doi}")
+        print(f"  PASS: {notebook_path}")
+        print(f"    - All {len(dataset_dois)} dataset DOI(s) are valid and cited")
         return "success"
 
 
