@@ -48,6 +48,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout QA tools
+        uses: actions/checkout@v4
+        with:
+          repository: ecmwf-training/gha-ci-notebook-checks
+          path: .tmp/${{ github.run_id }}-qa-tools
+
       - name: Set up Conda
         uses: conda-incubator/setup-miniconda@v3
         with:
@@ -101,14 +107,14 @@ jobs:
         id: doi_checker
         if: success() || failure()
         run: |
-          python ${{ github.workspace }}/gha-ci-notebook-checks/process-notebooks/checkers/doi_checker.py \
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/doi_checker.py \
             ${{ needs.collect.outputs.notebooks }}
 
       - name: (3.3.2) Check figure labels and sources
         id: figure_checker
         if: success() || failure()
         run: |
-          python ${{ github.workspace }}/gha-ci-notebook-checks/process-notebooks/checkers/figure_checker.py \
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/figure_checker.py \
             ${{ needs.collect.outputs.notebooks }}
 
       # Metadata check (inline)
