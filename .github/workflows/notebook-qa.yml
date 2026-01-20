@@ -124,12 +124,12 @@ jobs:
         run: |
           found=false
           for nb in ${{ needs.collect.outputs.notebooks }}; do
-            if grep -qiE "(last.?updated|version|modified|date).*[0-9]{4}" "$nb" 2>/dev/null; then
-              echo "✅ Found version date in $nb"
+            if date_match=$(grep -oiE "(last.?updated|version|modified|date).*[0-9]{4}" "$nb" 2>/dev/null | head -1); then
+              echo "✅ Found version date in $nb: $date_match"
               found=true
             elif [ -f "$(dirname "$nb")/README.md" ]; then
-              if grep -qiE "(last.?updated|version|modified|date).*[0-9]{4}" "$(dirname "$nb")/README.md" 2>/dev/null; then
-                echo "✅ Found version date in README.md for $nb"
+              if date_match=$(grep -oiE "(last.?updated|version|modified|date).*[0-9]{4}" "$(dirname "$nb")/README.md" 2>/dev/null | head -1); then
+                echo "✅ Found version date in README.md for $nb: $date_match"
                 found=true
               fi
             fi
