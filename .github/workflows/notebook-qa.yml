@@ -80,7 +80,29 @@ jobs:
       - name: (2.2.3) Run pynblint
         id: pynblint
         if: success() || failure()
-        run: echo ${{ needs.collect.outputs.notebooks }} | xargs -n 1 pynblint
+        run: |
+          failed=0
+          for nb in ${{ needs.collect.outputs.notebooks }}; do
+            echo "Checking: $nb"
+            output_file="/tmp/pynblint_$(basename "$nb" .ipynb).json"
+            pynblint "$nb" -o "$output_file"
+
+            # Parse JSON to check for lints (pynblint always exits 0)
+            lint_count=$(python -c "import json; print(len(json.load(open('$output_file'))['lints']))")
+            if [ "$lint_count" -gt 0 ]; then
+              echo "❌ $nb has $lint_count pynblint issue(s):"
+              python -c "
+          import json
+          data = json.load(open('$output_file'))
+          for lint in data['lints']:
+              print(f\"  - ({lint['slug']}) {lint['description']}\")
+          "
+              failed=1
+            else
+              echo "✅ $nb passed pynblint"
+            fi
+          done
+          exit $failed
 
       # Link checking with lychee (fast, Rust-based)
       - name: (1.2.3) Check links
