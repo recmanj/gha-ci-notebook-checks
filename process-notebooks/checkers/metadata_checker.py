@@ -71,7 +71,7 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
         except Exception:
             pass
 
-    print(f"⚠️  {notebook_path}: No 'Last updated' date found")
+    print(f"❌ {notebook_path}: No 'Last updated' date found")
     print(f"")
     print(f"   To fix this, add the following to the FIRST markdown cell of your notebook:")
     print(f"")
@@ -80,7 +80,7 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
     print(f"   Example:")
     print(f"       **Last updated:** 2025-01-15")
     print(f"")
-    return ("warning", None)
+    return ("failure", None)
 
 
 def main():
