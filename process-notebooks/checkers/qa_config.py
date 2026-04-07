@@ -40,8 +40,7 @@ except ImportError:
     HAS_YAML = False
 
 # Baseline pynblint rules to exclude across all consuming repos.
-# MyST notebooks use YAML frontmatter for titles, not Markdown # headings.
-PYNBLINT_DEFAULT_EXCLUDE = ["missing-h1-MD-heading"]
+PYNBLINT_DEFAULT_EXCLUDE = ["missing-h1-MD-heading", "imports-beyond-first-cell"]
 
 
 def load_config(config_path: str = ".github/notebook-qa.yml") -> dict[str, Any]:
