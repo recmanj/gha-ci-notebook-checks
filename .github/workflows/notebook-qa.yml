@@ -462,7 +462,7 @@ jobs:
           echo "labels_json=$LABELS_JSON" >> $GITHUB_OUTPUT
 
       - name: Create Jira ticket
-        uses: atlassian/gajira-create@1ff0b6bd115a780592b47bfbb63fc4629132e6ec # v3
+        uses: atlassian/gajira-create@59e177c4f6451399df5b4911c2211104f171e669 # v3.0.1
         with:
           project: ${{ secrets.JIRA_PROJECT_KEY }} # zizmor: ignore[secrets-outside-env]
           issuetype: ${{ inputs.jira_issue_type }}
