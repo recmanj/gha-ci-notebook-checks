@@ -163,13 +163,18 @@ jobs:
         if: (success() || failure()) && steps.config.outputs.skip_pynblint != 'true' && steps.config.outputs.notebooks_pynblint != ''
         env:
           NOTEBOOKS: ${{ steps.config.outputs.notebooks_pynblint }}
+          PYNBLINT_EXCLUDE: ${{ steps.config.outputs.pynblint_exclude }}
         run: |
           mapfile -t nbs <<< "$NOTEBOOKS"
           failed=0
           for nb in "${nbs[@]}"; do
             echo "Checking: $nb"
             output_file="/tmp/pynblint_$(basename "$nb" .ipynb).json"
-            pynblint "$nb" -o "$output_file"
+            if [ -n "$PYNBLINT_EXCLUDE" ]; then
+              pynblint "$nb" -o "$output_file" --exclude "$PYNBLINT_EXCLUDE"
+            else
+              pynblint "$nb" -o "$output_file"
+            fi
 
             # Parse JSON to check for lints (pynblint always exits 0)
             lint_count=$(python -c "import json; print(len(json.load(open('$output_file'))['lints']))")

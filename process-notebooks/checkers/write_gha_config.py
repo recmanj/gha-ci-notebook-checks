@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-from qa_config import get_filtered_notebooks_for_check, load_config
+from qa_config import get_filtered_notebooks_for_check, get_pynblint_exclude, load_config
 
 
 def parse_notebook_list(raw: str) -> list[str]:
@@ -79,6 +79,9 @@ def main():
             threshold = config.get("coverage_threshold", 80)
             out.write(f"require_tests={'true' if require else 'false'}\n")
             out.write(f"coverage_threshold={threshold}\n")
+
+            pynblint_exclude = get_pynblint_exclude(config)
+            out.write(f"pynblint_exclude={pynblint_exclude}\n")
 
 
 if __name__ == "__main__":

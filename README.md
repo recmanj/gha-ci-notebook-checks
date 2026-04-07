@@ -95,7 +95,17 @@ notebooks:
 # Test configuration
 require_tests: false     # Set true to fail when no test files exist
 coverage_threshold: 80   # Minimum coverage percentage for pytest-cov
+
+# Pynblint rule configuration
+pynblint:
+  exclude:                    # Additional rules to suppress (extends baseline)
+    - untitled-notebook
+  exclude_mode: extend        # "extend" (default) or "override"
 ```
+
+The baseline pynblint exclusion list suppresses `missing-h1-MD-heading` (MyST notebooks use YAML frontmatter for titles). In `extend` mode (default), your `exclude` list is merged with the baseline. In `override` mode, your list fully replaces the baseline.
+
+Available pynblint rule slugs: `non-linear-execution`, `notebook-too-long`, `untitled-notebook`, `non-portable-chars-in-nb-name`, `notebook-name-too-long`, `imports-beyond-first-cell`, `missing-h1-MD-heading`, `missing-opening-MD-text`, `missing-closing-MD-text`, `too-few-MD-cells`, `duplicate-notebook-not-renamed`, `invalid-python-syntax`, `non-executed-notebook`, `non-executed-cells`, `empty-cells`, `long-multiline-python-comment`, `cell-too-long`
 
 Valid check IDs: `linter`, `formatter`, `pynblint`, `links`, `tests`, `doi`, `figures`, `metadata`, `accessibility`, `license`, `changelog`, `execute`
 

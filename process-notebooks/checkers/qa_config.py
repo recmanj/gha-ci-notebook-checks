@@ -26,6 +26,7 @@ Config file format:
           - figures
 """
 
+import json
 import os
 from fnmatch import fnmatch
 from typing import Any
@@ -37,6 +38,10 @@ try:
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
+
+# Baseline pynblint rules to exclude across all consuming repos.
+# MyST notebooks use YAML frontmatter for titles, not Markdown # headings.
+PYNBLINT_DEFAULT_EXCLUDE = ["missing-h1-MD-heading"]
 
 
 def load_config(config_path: str = ".github/notebook-qa.yml") -> dict[str, Any]:
@@ -174,3 +179,36 @@ def get_filtered_notebooks_for_check(
 
     filtered = filter_notebooks(config, check_id, notebooks)
     return (False, filtered)
+
+
+def get_pynblint_exclude(config: dict[str, Any]) -> str:
+    """
+    Build the pynblint --exclude JSON string from baseline + user config.
+
+    Config format in .github/notebook-qa.yml:
+        pynblint:
+          exclude:
+            - untitled-notebook
+          exclude_mode: extend   # "extend" (default) or "override"
+
+    Returns:
+        JSON array string for pynblint --exclude, or empty string if no exclusions.
+    """
+    pynblint_config = config.get("pynblint", {})
+    if not isinstance(pynblint_config, dict):
+        pynblint_config = {}
+
+    user_exclude = pynblint_config.get("exclude", [])
+    if not isinstance(user_exclude, list):
+        user_exclude = []
+
+    mode = pynblint_config.get("exclude_mode", "extend")
+
+    if mode == "override":
+        exclude = user_exclude
+    else:
+        exclude = sorted(set(PYNBLINT_DEFAULT_EXCLUDE + user_exclude))
+
+    if not exclude:
+        return ""
+    return json.dumps(exclude)
