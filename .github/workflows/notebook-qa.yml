@@ -58,7 +58,7 @@ jobs:
     outputs:
       notebooks: ${{ steps.notebooks.outputs.files }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Get notebooks
         id: notebooks
@@ -103,16 +103,16 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Checkout QA tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ inputs.qa_tools_repo }}
           path: .tmp/${{ github.run_id }}-qa-tools
 
       - name: Set up Conda
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
           miniforge-version: latest
           activate-environment: notebook-qa
@@ -187,7 +187,7 @@ jobs:
       - name: (1.2.3) Check links
         id: link_checker
         if: (success() || failure()) && steps.config.outputs.skip_links != 'true' && steps.config.outputs.notebooks_links != ''
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
         with:
           args: --verbose --no-progress ${{ steps.config.outputs.notebooks_links }}
           fail: true
@@ -291,10 +291,10 @@ jobs:
     env:
       CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Checkout QA tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ inputs.qa_tools_repo }}
           path: .tmp/${{ github.run_id }}-qa-tools
@@ -315,7 +315,7 @@ jobs:
 
       - name: Set up Conda
         if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != ''
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
           miniforge-version: latest
           activate-environment: notebook-qa
@@ -387,7 +387,7 @@ jobs:
 
       - name: Upload profiling artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: notebook-profiling-${{ github.run_id }}
           path: ${{ env.QA_OUTPUT_DIR }}
@@ -403,7 +403,7 @@ jobs:
       (needs.lint.result == 'failure' || needs.execute.result == 'failure')
     steps:
       - name: Login to Jira
-        uses: atlassian/gajira-login@v3
+        uses: atlassian/gajira-login@ca13f8850ea309cf44a6e4e0c49d9aa48ac3ca4c # v3
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
@@ -454,7 +454,7 @@ jobs:
           echo "labels_json=$LABELS_JSON" >> $GITHUB_OUTPUT
 
       - name: Create Jira ticket
-        uses: atlassian/gajira-create@v3
+        uses: atlassian/gajira-create@1ff0b6bd115a780592b47bfbb63fc4629132e6ec # v3
         with:
           project: ${{ secrets.JIRA_PROJECT_KEY }}
           issuetype: ${{ inputs.jira_issue_type }}
