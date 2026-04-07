@@ -11,26 +11,23 @@ Usage:
 import argparse
 import re
 import sys
-from typing import Optional
 
 import requests
-
-from qa_config import load_config, filter_notebooks, is_check_disabled
-from utils import read_notebook, extract_cell_source
-
+from qa_config import filter_notebooks, is_check_disabled, load_config
+from utils import extract_cell_source, read_notebook
 
 # DOI regex patterns - include both uppercase and lowercase letters
 DOI_PATTERNS = [
-    r'10\.\d{4,9}/[-._;()/:A-Za-z0-9]+',  # Standard DOI format
-    r'doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)',  # doi.org URLs
-    r'https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)'  # Full DOI URLs
+    r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+",  # Standard DOI format
+    r"doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)",  # doi.org URLs
+    r"https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)",  # Full DOI URLs
 ]
 
 # Pattern for validating DOI format
-VALID_DOI_PATTERN = re.compile(r'^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$', re.IGNORECASE)
+VALID_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$", re.IGNORECASE)
 
 
-def validate_doi_resolves(doi: str, timeout: int = 10) -> Optional[bool]:
+def validate_doi_resolves(doi: str, timeout: int = 10) -> bool | None:
     """
     Check if a DOI resolves via doi.org.
 
@@ -48,7 +45,7 @@ def validate_doi_resolves(doi: str, timeout: int = 10) -> Optional[bool]:
             f"https://doi.org/{doi}",
             allow_redirects=False,
             timeout=timeout,
-            headers={'User-Agent': 'NotebookQA/1.0'}
+            headers={"User-Agent": "NotebookQA/1.0"},
         )
         return response.status_code in [200, 301, 302]
     except requests.RequestException:
@@ -84,7 +81,7 @@ def check_doi(notebook_path: str) -> str:
     Returns: "success", "failure", or "skipped"
     """
     # Metadata fields that might contain DOI references
-    metadata_fields = ['references', 'citation', 'doi', 'reference', 'Attributes']
+    metadata_fields = ["references", "citation", "doi", "reference", "Attributes"]
 
     try:
         nb_data = read_notebook(notebook_path)
@@ -95,25 +92,25 @@ def check_doi(notebook_path: str) -> str:
     # Step 1: Find DOIs in dataset metadata (code cell outputs)
     dataset_dois = set()
 
-    for cell in nb_data.get('cells', []):
-        if cell.get('cell_type') != 'code':
+    for cell in nb_data.get("cells", []):
+        if cell.get("cell_type") != "code":
             continue
 
-        for output in cell.get('outputs', []):
+        for output in cell.get("outputs", []):
             # Check text outputs for dataset metadata with DOIs
-            if 'text' in output:
-                text = output['text']
+            if "text" in output:
+                text = output["text"]
                 if isinstance(text, list):
-                    text = ''.join(text)
+                    text = "".join(text)
                 if any(field in text for field in metadata_fields):
                     dataset_dois.update(extract_dois_from_text(text))
 
             # Check data outputs for metadata
-            data = output.get('data', {})
-            for key, value in data.items():
+            data = output.get("data", {})
+            for _key, value in data.items():
                 if isinstance(value, (str, list)):
                     if isinstance(value, list):
-                        value = ''.join(value)
+                        value = "".join(value)
                     if any(field in value for field in metadata_fields):
                         dataset_dois.update(extract_dois_from_text(value))
 
@@ -132,8 +129,8 @@ def check_doi(notebook_path: str) -> str:
     # Step 2: Find DOIs cited in markdown cells
     cited_dois = set()
 
-    for cell in nb_data.get('cells', []):
-        if cell.get('cell_type') == 'markdown':
+    for cell in nb_data.get("cells", []):
+        if cell.get("cell_type") == "markdown":
             source = extract_cell_source(cell)
             cited_dois.update(extract_dois_from_text(source))
 
@@ -194,30 +191,24 @@ def check_doi(notebook_path: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Check for DOI citations in Jupyter notebooks'
-    )
+    parser = argparse.ArgumentParser(description="Check for DOI citations in Jupyter notebooks")
+    parser.add_argument("notebooks", nargs="*", help="Notebook files to check")
     parser.add_argument(
-        'notebooks',
-        nargs='*',
-        help='Notebook files to check'
-    )
-    parser.add_argument(
-        '--config',
-        default='.github/notebook-qa.yml',
-        help='Path to QA configuration file (default: .github/notebook-qa.yml)'
+        "--config",
+        default=".github/notebook-qa.yml",
+        help="Path to QA configuration file (default: .github/notebook-qa.yml)",
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     # Check if DOI check is globally disabled
-    if is_check_disabled(config, 'doi'):
+    if is_check_disabled(config, "doi"):
         print("DOI check is disabled by configuration")
         sys.exit(0)
 
     # Filter notebooks based on config
-    notebooks = filter_notebooks(config, 'doi', args.notebooks)
+    notebooks = filter_notebooks(config, "doi", args.notebooks)
 
     if not notebooks:
         print("All notebooks skipped by configuration")

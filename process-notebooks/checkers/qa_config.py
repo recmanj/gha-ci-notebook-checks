@@ -33,6 +33,7 @@ from typing import Any
 # Optional YAML import - falls back gracefully if not available
 try:
     import yaml
+
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
@@ -56,7 +57,7 @@ def load_config(config_path: str = ".github/notebook-qa.yml") -> dict[str, Any]:
         return {}
 
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
             return config if config else {}
     except Exception as e:
@@ -75,7 +76,7 @@ def is_check_disabled(config: dict[str, Any], check_id: str) -> bool:
     Returns:
         True if check is globally disabled, False otherwise
     """
-    disabled_checks = config.get('disabled_checks', [])
+    disabled_checks = config.get("disabled_checks", [])
     return check_id in disabled_checks
 
 
@@ -90,16 +91,11 @@ def is_notebook_skipped(config: dict[str, Any], notebook: str) -> bool:
     Returns:
         True if notebook should be skipped, False otherwise
     """
-    skip_patterns = config.get('skip_notebooks', [])
-    for pattern in skip_patterns:
-        if fnmatch(notebook, pattern):
-            return True
-    return False
+    skip_patterns = config.get("skip_notebooks", [])
+    return any(fnmatch(notebook, pattern) for pattern in skip_patterns)
 
 
-def is_check_skipped_for_notebook(
-    config: dict[str, Any], check_id: str, notebook: str
-) -> bool:
+def is_check_skipped_for_notebook(config: dict[str, Any], check_id: str, notebook: str) -> bool:
     """
     Check if a specific check should be skipped for a specific notebook.
 
@@ -111,18 +107,16 @@ def is_check_skipped_for_notebook(
     Returns:
         True if check should be skipped for this notebook, False otherwise
     """
-    per_notebook = config.get('notebooks', {})
+    per_notebook = config.get("notebooks", {})
     for pattern, settings in per_notebook.items():
         if fnmatch(notebook, pattern):
-            skip_checks = settings.get('skip', [])
+            skip_checks = settings.get("skip", [])
             if check_id in skip_checks:
                 return True
     return False
 
 
-def filter_notebooks(
-    config: dict[str, Any], check_id: str, notebooks: list[str]
-) -> list[str]:
+def filter_notebooks(config: dict[str, Any], check_id: str, notebooks: list[str]) -> list[str]:
     """
     Filter a list of notebooks based on configuration.
 

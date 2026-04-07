@@ -25,12 +25,12 @@ import argparse
 import os
 import sys
 
-from qa_config import load_config, get_filtered_notebooks_for_check
+from qa_config import get_filtered_notebooks_for_check, load_config
 
 
 def parse_notebook_list(raw: str) -> list[str]:
     """Parse notebook list from newline-separated (or space-separated) string."""
-    if '\n' in raw:
+    if "\n" in raw:
         return [nb.strip() for nb in raw.splitlines() if nb.strip()]
     return raw.split()
 
@@ -47,41 +47,36 @@ def write_multiline_output(fh, key: str, lines: list[str]) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Write QA config outputs for GitHub Actions"
+    parser = argparse.ArgumentParser(description="Write QA config outputs for GitHub Actions")
+    parser.add_argument(
+        "--checks", nargs="+", required=True, help="Check IDs to produce output for"
     )
     parser.add_argument(
-        '--checks', nargs='+', required=True,
-        help="Check IDs to produce output for"
+        "--config", default=".github/notebook-qa.yml", help="Path to QA config file"
     )
     parser.add_argument(
-        '--config', default='.github/notebook-qa.yml',
-        help="Path to QA config file"
-    )
-    parser.add_argument(
-        '--extras', action='store_true',
-        help="Also write require_tests and coverage_threshold"
+        "--extras", action="store_true", help="Also write require_tests and coverage_threshold"
     )
     args = parser.parse_args()
 
-    raw_notebooks = os.environ.get('ALL_NOTEBOOKS', '')
+    raw_notebooks = os.environ.get("ALL_NOTEBOOKS", "")
     notebooks = parse_notebook_list(raw_notebooks)
     config = load_config(args.config)
 
-    output_path = os.environ.get('GITHUB_OUTPUT')
+    output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         print("Error: GITHUB_OUTPUT environment variable not set", file=sys.stderr)
         sys.exit(1)
 
-    with open(output_path, 'a') as out:
+    with open(output_path, "a") as out:
         for check in args.checks:
             skip, filtered = get_filtered_notebooks_for_check(config, check, notebooks)
             out.write(f"skip_{check}={'true' if skip else 'false'}\n")
             write_multiline_output(out, f"notebooks_{check}", filtered)
 
         if args.extras:
-            require = config.get('require_tests', False)
-            threshold = config.get('coverage_threshold', 80)
+            require = config.get("require_tests", False)
+            threshold = config.get("coverage_threshold", 80)
             out.write(f"require_tests={'true' if require else 'false'}\n")
             out.write(f"coverage_threshold={threshold}\n")
 

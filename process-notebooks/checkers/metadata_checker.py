@@ -16,8 +16,8 @@ import re
 import sys
 from pathlib import Path
 
-from qa_config import load_config, filter_notebooks, is_check_disabled
-from utils import read_notebook, extract_cell_source
+from qa_config import filter_notebooks, is_check_disabled, load_config
+from utils import extract_cell_source, read_notebook
 
 
 def check_metadata(notebook_path: str) -> tuple[str, str | None]:
@@ -26,7 +26,7 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
 
     Returns: ("success"|"failure"|"warning", date_found_or_None)
     """
-    date_pattern = r'\*\*Last updated:\*\*\s*(\d{4}-\d{2}-\d{2})'
+    date_pattern = r"\*\*Last updated:\*\*\s*(\d{4}-\d{2}-\d{2})"
 
     try:
         nb_data = read_notebook(notebook_path)
@@ -34,13 +34,13 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
         print(f"❌ Error reading {notebook_path}: {e}")
         return ("failure", None)
 
-    cells = nb_data.get('cells', [])
+    cells = nb_data.get("cells", [])
 
     # Check all markdown cells before the first code cell
     for cell in cells:
-        if cell.get('cell_type') == 'code':
+        if cell.get("cell_type") == "code":
             break  # Stop searching once we hit code
-        if cell.get('cell_type') == 'markdown':
+        if cell.get("cell_type") == "markdown":
             source = extract_cell_source(cell)
             match = re.search(date_pattern, source)
             if match:
@@ -52,7 +52,7 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
     readme_path = Path(notebook_path).parent / "README.md"
     if readme_path.exists():
         try:
-            readme_text = readme_path.read_text(encoding='utf-8')
+            readme_text = readme_path.read_text(encoding="utf-8")
             match = re.search(date_pattern, readme_text)
             if match:
                 date = match.group(1)
@@ -62,42 +62,38 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
             pass
 
     print(f"❌ {notebook_path}: No 'Last updated' date found")
-    print(f"")
-    print(f"   To fix this, add the following to the FIRST markdown cell of your notebook:")
-    print(f"")
-    print(f"       **Last updated:** YYYY-MM-DD")
-    print(f"")
-    print(f"   Example:")
-    print(f"       **Last updated:** 2025-01-15")
-    print(f"")
+    print("")
+    print("   To fix this, add the following to the FIRST markdown cell of your notebook:")
+    print("")
+    print("       **Last updated:** YYYY-MM-DD")
+    print("")
+    print("   Example:")
+    print("       **Last updated:** 2025-01-15")
+    print("")
     return ("failure", None)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Check for Last updated metadata in Jupyter notebooks'
+        description="Check for Last updated metadata in Jupyter notebooks"
     )
+    parser.add_argument("notebooks", nargs="*", help="Notebook files to check")
     parser.add_argument(
-        'notebooks',
-        nargs='*',
-        help='Notebook files to check'
-    )
-    parser.add_argument(
-        '--config',
-        default='.github/notebook-qa.yml',
-        help='Path to QA configuration file (default: .github/notebook-qa.yml)'
+        "--config",
+        default=".github/notebook-qa.yml",
+        help="Path to QA configuration file (default: .github/notebook-qa.yml)",
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     # Check if metadata check is globally disabled
-    if is_check_disabled(config, 'metadata'):
+    if is_check_disabled(config, "metadata"):
         print("Metadata check is disabled by configuration")
         sys.exit(0)
 
     # Filter notebooks based on config
-    notebooks = filter_notebooks(config, 'metadata', args.notebooks)
+    notebooks = filter_notebooks(config, "metadata", args.notebooks)
 
     if not notebooks:
         print("All notebooks skipped by configuration")

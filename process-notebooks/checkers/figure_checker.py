@@ -12,8 +12,8 @@ import argparse
 import re
 import sys
 
-from qa_config import load_config, filter_notebooks, is_check_disabled
-from utils import read_notebook, extract_cell_source
+from qa_config import filter_notebooks, is_check_disabled, load_config
+from utils import extract_cell_source, read_notebook
 
 
 def check_figures(notebook_path: str) -> str:
@@ -24,14 +24,14 @@ def check_figures(notebook_path: str) -> str:
     """
     # Source attribution patterns
     source_patterns = [
-        r'source:?\s+\S+',
-        r'data\s+from:?\s*',
-        r'doi:?\s*10\.\d+',
-        r'https?://\S+',
-        r'credit:?\s*',
-        r'attribution:?\s*',
-        r'reference:?\s*',
-        r'dataset:?\s*',
+        r"source:?\s+\S+",
+        r"data\s+from:?\s*",
+        r"doi:?\s*10\.\d+",
+        r"https?://\S+",
+        r"credit:?\s*",
+        r"attribution:?\s*",
+        r"reference:?\s*",
+        r"dataset:?\s*",
     ]
 
     try:
@@ -41,18 +41,18 @@ def check_figures(notebook_path: str) -> str:
         return "failure"
 
     issues = []
-    cells = nb_data.get('cells', [])
+    cells = nb_data.get("cells", [])
 
     for cell_idx, cell in enumerate(cells):
-        if cell.get('cell_type') == 'code':
-            outputs = cell.get('outputs', [])
+        if cell.get("cell_type") == "code":
+            outputs = cell.get("outputs", [])
 
             for output in outputs:
-                if output.get('output_type') in ['display_data', 'execute_result']:
-                    data = output.get('data', {})
+                if output.get("output_type") in ["display_data", "execute_result"]:
+                    data = output.get("data", {})
 
                     # Check if this is a figure output
-                    if 'image/png' in data or 'image/jpeg' in data or 'image/jpg' in data:
+                    if "image/png" in data or "image/jpeg" in data or "image/jpg" in data:
                         # Check nearby markdown cells for source attribution
                         has_source = False
 
@@ -61,7 +61,7 @@ def check_figures(notebook_path: str) -> str:
                             check_idx = cell_idx + offset
                             if 0 <= check_idx < len(cells):
                                 check_cell = cells[check_idx]
-                                if check_cell.get('cell_type') == 'markdown':
+                                if check_cell.get("cell_type") == "markdown":
                                     source = extract_cell_source(check_cell)
 
                                     # Check for source patterns
@@ -90,29 +90,25 @@ def check_figures(notebook_path: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Check for figure labels and source attribution in Jupyter notebooks'
+        description="Check for figure labels and source attribution in Jupyter notebooks"
     )
+    parser.add_argument("notebooks", nargs="*", help="Notebook files to check")
     parser.add_argument(
-        'notebooks',
-        nargs='*',
-        help='Notebook files to check'
-    )
-    parser.add_argument(
-        '--config',
-        default='.github/notebook-qa.yml',
-        help='Path to QA configuration file (default: .github/notebook-qa.yml)'
+        "--config",
+        default=".github/notebook-qa.yml",
+        help="Path to QA configuration file (default: .github/notebook-qa.yml)",
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     # Check if figures check is globally disabled
-    if is_check_disabled(config, 'figures'):
+    if is_check_disabled(config, "figures"):
         print("Figure check is disabled by configuration")
         sys.exit(0)
 
     # Filter notebooks based on config
-    notebooks = filter_notebooks(config, 'figures', args.notebooks)
+    notebooks = filter_notebooks(config, "figures", args.notebooks)
 
     if not notebooks:
         print("All notebooks skipped by configuration")
