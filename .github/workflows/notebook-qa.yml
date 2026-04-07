@@ -13,6 +13,30 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      jira_create_ticket:
+        description: 'Create Jira ticket on failure (requires JIRA_* secrets)'
+        required: false
+        type: boolean
+        default: false
+      jira_issue_type:
+        description: 'Jira issue type for failure tickets'
+        required: false
+        type: string
+        default: 'Bug'
+      jira_labels:
+        description: 'Comma-separated labels for Jira ticket'
+        required: false
+        type: string
+        default: 'notebook-qa,automated'
+    secrets:
+      JIRA_BASE_URL:
+        required: false
+      JIRA_USER_EMAIL:
+        required: false
+      JIRA_API_TOKEN:
+        required: false
+      JIRA_PROJECT_KEY:
+        required: false
 
 env:
   QA_OUTPUT_DIR: qa_outputs${{ github.run_id }}
@@ -42,6 +66,18 @@ jobs:
   lint:
     needs: collect
     runs-on: ubuntu-latest
+    outputs:
+      linter_result: ${{ steps.linter.outcome }}
+      formatter_result: ${{ steps.formatter.outcome }}
+      pynblint_result: ${{ steps.pynblint.outcome }}
+      link_result: ${{ steps.link_checker.outcome }}
+      test_result: ${{ steps.test_checker.outcome }}
+      doi_result: ${{ steps.doi_checker.outcome }}
+      figure_result: ${{ steps.figure_checker.outcome }}
+      metadata_result: ${{ steps.metadata_checker.outcome }}
+      accessibility_result: ${{ steps.accessibility_checker.outcome }}
+      license_result: ${{ steps.license.outcome }}
+      changelog_result: ${{ steps.changelog.outcome }}
     defaults:
       run:
         shell: bash -el {0}
@@ -234,6 +270,8 @@ jobs:
   execute:
     needs: collect
     runs-on: ${{ inputs.execution_runner }}
+    outputs:
+      execute_result: ${{ steps.execute_notebooks.outcome }}
     defaults:
       run:
         shell: bash -el {0}
@@ -376,3 +414,71 @@ jobs:
           name: notebook-profiling-${{ github.run_id }}
           path: ${{ env.QA_OUTPUT_DIR }}
           if-no-files-found: ignore
+
+  # Job 3: Create Jira ticket on failure (optional)
+  notify-failure:
+    needs: [lint, execute]
+    runs-on: ubuntu-latest
+    if: >-
+      always() &&
+      inputs.jira_create_ticket == true &&
+      (needs.lint.result == 'failure' || needs.execute.result == 'failure')
+    steps:
+      - name: Login to Jira
+        uses: atlassian/gajira-login@v3
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+      - name: Build failure summary
+        id: summary
+        run: |
+          # Build a list of failed checks
+          FAILED_CHECKS=""
+
+          # Lint job checks
+          [ "${{ needs.lint.outputs.linter_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Linter (ruff check)\n"
+          [ "${{ needs.lint.outputs.formatter_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Formatter (ruff format)\n"
+          [ "${{ needs.lint.outputs.pynblint_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Pynblint\n"
+          [ "${{ needs.lint.outputs.link_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Link checker\n"
+          [ "${{ needs.lint.outputs.test_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Tests/coverage\n"
+          [ "${{ needs.lint.outputs.doi_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- DOI references\n"
+          [ "${{ needs.lint.outputs.figure_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Figure labels/sources\n"
+          [ "${{ needs.lint.outputs.metadata_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Version metadata\n"
+          [ "${{ needs.lint.outputs.accessibility_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Accessibility\n"
+          [ "${{ needs.lint.outputs.license_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- LICENSE file\n"
+          [ "${{ needs.lint.outputs.changelog_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- CHANGELOG\n"
+
+          # Execute job
+          [ "${{ needs.execute.outputs.execute_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Notebook execution\n"
+
+          echo "failed_checks<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$FAILED_CHECKS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Convert comma-separated labels to JSON array
+          LABELS_INPUT="${{ inputs.jira_labels }}"
+          LABELS_JSON=$(echo "$LABELS_INPUT" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -s .)
+          echo "labels_json=$LABELS_JSON" >> $GITHUB_OUTPUT
+
+      - name: Create Jira ticket
+        uses: atlassian/gajira-create@v3
+        with:
+          project: ${{ secrets.JIRA_PROJECT_KEY }}
+          issuetype: ${{ inputs.jira_issue_type }}
+          summary: '[Notebook QA] Checks failed in ${{ github.repository }} (${{ github.ref_name }})'
+          description: |
+            h2. Notebook QA Workflow Failure
+
+            *Repository:* ${{ github.repository }}
+            *Branch:* ${{ github.ref_name }}
+            *Commit:* ${{ github.sha }}
+            *Workflow Run:* [View logs|${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}]
+
+            h3. Failed Checks
+            ${{ steps.summary.outputs.failed_checks }}
+
+            h3. Triggered By
+            ${{ github.event.head_commit.message || github.event.pull_request.title || 'Manual run' }}
+          fields: '{"labels": ${{ steps.summary.outputs.labels_json }}}'
