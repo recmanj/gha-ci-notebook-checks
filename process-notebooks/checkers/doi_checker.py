@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import sys
 from typing import Optional
@@ -17,20 +16,7 @@ from typing import Optional
 import requests
 
 from qa_config import load_config, filter_notebooks, is_check_disabled
-
-
-def read_notebook(notebook_path: str) -> dict:
-    """Read and parse a Jupyter notebook file."""
-    with open(notebook_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def extract_cell_source(cell: dict) -> str:
-    """Extract source code/markdown from a cell as a single string."""
-    source = cell.get('source', [])
-    if isinstance(source, list):
-        return ''.join(source)
-    return str(source)
+from utils import read_notebook, extract_cell_source
 
 
 # DOI regex patterns - include both uppercase and lowercase letters
@@ -86,6 +72,14 @@ def check_doi(notebook_path: str) -> str:
     1. DOIs found in dataset metadata are syntactically valid
     2. DOIs resolve via doi.org (exist in DOI registry)
     3. Dataset DOIs are properly cited in markdown cells
+
+    NOTE: This checker looks for DOIs in code cell outputs (executed notebook
+    metadata). Notebooks must be committed with outputs for this check to find
+    dataset DOIs. The lint and execute jobs run in parallel, so this checker
+    does NOT see freshly-executed outputs.
+
+    If notebooks are committed without outputs, this check will skip them
+    (report "No dataset DOI metadata found") rather than fail.
 
     Returns: "success", "failure", or "skipped"
     """

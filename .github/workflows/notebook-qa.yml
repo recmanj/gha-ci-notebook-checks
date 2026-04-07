@@ -4,30 +4,40 @@ on:
   workflow_call:
     inputs:
       notebooks:
-        description: 'Space-separated list of notebook paths to check (default: all *.ipynb)'
+        description: "Space-separated list of notebook paths to check (default: all *.ipynb)"
         required: false
         type: string
-        default: ''
+        default: ""
       execution_runner:
-        description: 'Runner for notebook execution (supports self-hosted)'
+        description: "Runner for notebook execution (supports self-hosted)"
         required: false
         type: string
-        default: 'ubuntu-latest'
+        default: "ubuntu-latest"
+      execution_timeout:
+        description: "Timeout in minutes for notebook execution job"
+        required: false
+        type: number
+        default: 60
+      qa_tools_repo:
+        description: "Repository containing QA tools"
+        required: false
+        type: string
+        default: "recmanj/gha-ci-notebook-checks"
       jira_create_ticket:
-        description: 'Create Jira ticket on failure (requires JIRA_* secrets)'
+        description: "Create Jira ticket on failure (requires JIRA_* secrets)"
         required: false
         type: boolean
         default: false
       jira_issue_type:
-        description: 'Jira issue type for failure tickets'
+        description: "Jira issue type for failure tickets"
         required: false
         type: string
-        default: 'Bug'
+        default: "Bug"
       jira_labels:
-        description: 'Comma-separated labels for Jira ticket'
+        description: "Comma-separated labels for Jira ticket"
         required: false
         type: string
-        default: 'notebook-qa,automated'
+        default: "notebook-qa,automated"
     secrets:
       JIRA_BASE_URL:
         required: false
@@ -52,14 +62,25 @@ jobs:
 
       - name: Get notebooks
         id: notebooks
+        env:
+          INPUT_NOTEBOOKS: ${{ inputs.notebooks }}
         run: |
-          if [ -n "${{ inputs.notebooks }}" ]; then
-            echo "files=${{ inputs.notebooks }}" >> $GITHUB_OUTPUT
-            echo "Using specified notebooks: ${{ inputs.notebooks }}"
+          if [ -n "$INPUT_NOTEBOOKS" ]; then
+            NBS=$(printf '%s\n' $INPUT_NOTEBOOKS)
           else
-            NOTEBOOKS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*' | tr '\n' ' ')
-            echo "files=$NOTEBOOKS" >> $GITHUB_OUTPUT
-            echo "Found notebooks: $NOTEBOOKS"
+            NBS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*')
+          fi
+          if [ -z "$NBS" ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+            echo "No notebooks found."
+          else
+            {
+              echo "files<<__NB_EOF__"
+              echo "$NBS"
+              echo "__NB_EOF__"
+            } >> "$GITHUB_OUTPUT"
+            echo "Notebooks:"
+            echo "$NBS"
           fi
 
   # Job 1: Static checks (fast, run on default runner)
@@ -87,7 +108,7 @@ jobs:
       - name: Checkout QA tools
         uses: actions/checkout@v4
         with:
-          repository: recmanj/gha-ci-notebook-checks
+          repository: ${{ inputs.qa_tools_repo }}
           path: .tmp/${{ github.run_id }}-qa-tools
 
       - name: Set up Conda
@@ -105,69 +126,42 @@ jobs:
       # Load QA configuration
       - name: Load QA config
         id: config
+        env:
+          ALL_NOTEBOOKS: ${{ needs.collect.outputs.notebooks }}
         run: |
-          python << 'EOF'
-          import yaml
-          import os
-          from fnmatch import fnmatch
-
-          config_path = '.github/notebook-qa.yml'
-          all_notebooks = "${{ needs.collect.outputs.notebooks }}".split()
-          config = {}
-
-          if os.path.exists(config_path):
-              with open(config_path) as f:
-                  config = yaml.safe_load(f) or {}
-
-          disabled = config.get('disabled_checks', [])
-          skip_notebooks = config.get('skip_notebooks', [])
-          per_notebook = config.get('notebooks', {})
-
-          def filter_for_check(check_id, notebooks):
-              """Filter notebook list for a specific check."""
-              result = []
-              for nb in notebooks:
-                  # Skip if notebook matches skip_notebooks patterns
-                  if any(fnmatch(nb, pat) for pat in skip_notebooks):
-                      continue
-                  # Skip if per-notebook config says skip this check
-                  skip_this = False
-                  for pattern, settings in per_notebook.items():
-                      if fnmatch(nb, pattern):
-                          if check_id in settings.get('skip', []):
-                              skip_this = True
-                              break
-                  if not skip_this:
-                      result.append(nb)
-              return result
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              for check in ['linter', 'formatter', 'pynblint', 'links', 'tests',
-                            'doi', 'figures', 'metadata', 'accessibility', 'license', 'changelog']:
-                  # Global skip flag
-                  out.write(f"skip_{check}={'true' if check in disabled else 'false'}\n")
-                  # Filtered notebook list for this check
-                  filtered = filter_for_check(check, all_notebooks)
-                  out.write(f"notebooks_{check}={' '.join(filtered)}\n")
-          EOF
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/write_gha_config.py \
+            --checks linter formatter pynblint links tests doi figures metadata accessibility license changelog \
+            --config .github/notebook-qa.yml \
+            --extras
 
       # Linting checks
       - name: (2.2.3) Run linter
         id: linter
         if: (success() || failure()) && steps.config.outputs.skip_linter != 'true' && steps.config.outputs.notebooks_linter != ''
-        run: nbqa "ruff check" ${{ steps.config.outputs.notebooks_linter }}
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_linter }}
+        run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
+          nbqa "ruff check" "${nbs[@]}"
 
       - name: (2.2.3) Run formatter
         id: formatter
         if: (success() || failure()) && steps.config.outputs.skip_formatter != 'true' && steps.config.outputs.notebooks_formatter != ''
-        run: nbqa "ruff format --check --diff" ${{ steps.config.outputs.notebooks_formatter }}
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_formatter }}
+        run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
+          nbqa "ruff format --check --diff" "${nbs[@]}"
 
       - name: (2.2.3) Run pynblint
         id: pynblint
         if: (success() || failure()) && steps.config.outputs.skip_pynblint != 'true' && steps.config.outputs.notebooks_pynblint != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_pynblint }}
         run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
           failed=0
-          for nb in ${{ steps.config.outputs.notebooks_pynblint }}; do
+          for nb in "${nbs[@]}"; do
             echo "Checking: $nb"
             output_file="/tmp/pynblint_$(basename "$nb" .ipynb).json"
             pynblint "$nb" -o "$output_file"
@@ -202,38 +196,56 @@ jobs:
       - name: (2.3.1, 2.3.2) Check tests and coverage
         id: test_checker
         if: (success() || failure()) && steps.config.outputs.skip_tests != 'true'
+        env:
+          REQUIRE_TESTS: ${{ steps.config.outputs.require_tests }}
+          COVERAGE_THRESHOLD: ${{ steps.config.outputs.coverage_threshold }}
         run: |
           if ls test_*.py *_test.py tests/*.py 2>/dev/null; then
-            pytest --cov=. --cov-report=term --cov-fail-under=80
+            pytest --cov=. --cov-report=term --cov-fail-under="$COVERAGE_THRESHOLD"
           else
-            echo "No test files found, skipping coverage check"
+            echo "::warning::No test files found"
+            if [ "$REQUIRE_TESTS" = "true" ]; then
+              echo "Tests are required by configuration (require_tests: true)"
+              exit 1
+            fi
           fi
 
       # Custom checks
+      # NOTE: DOI check scans code cell outputs for dataset DOIs.
+      # Requires notebooks committed with outputs. See doi_checker.py docstring.
       - name: (1.2.5) Check for DOI references
         id: doi_checker
         if: (success() || failure()) && steps.config.outputs.skip_doi != 'true' && steps.config.outputs.notebooks_doi != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_doi }}
         run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/doi_checker.py \
             --config .github/notebook-qa.yml \
-            ${{ steps.config.outputs.notebooks_doi }}
+            "${nbs[@]}"
 
       - name: (3.3.2) Check figure labels and sources
         id: figure_checker
         if: (success() || failure()) && steps.config.outputs.skip_figures != 'true' && steps.config.outputs.notebooks_figures != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_figures }}
         run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/figure_checker.py \
             --config .github/notebook-qa.yml \
-            ${{ steps.config.outputs.notebooks_figures }}
+            "${nbs[@]}"
 
       # Metadata version check
       - name: (1.2.6) Check version metadata
         id: metadata_checker
         if: (success() || failure()) && steps.config.outputs.skip_metadata != 'true' && steps.config.outputs.notebooks_metadata != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_metadata }}
         run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/metadata_checker.py \
             --config .github/notebook-qa.yml \
-            ${{ steps.config.outputs.notebooks_metadata }}
+            "${nbs[@]}"
 
       # Accessibility check
       - name: (3.1.3) Check accessibility
@@ -270,6 +282,7 @@ jobs:
   execute:
     needs: collect
     runs-on: ${{ inputs.execution_runner }}
+    timeout-minutes: ${{ inputs.execution_timeout }}
     outputs:
       execute_result: ${{ steps.execute_notebooks.outcome }}
     defaults:
@@ -280,58 +293,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout QA tools
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.qa_tools_repo }}
+          path: .tmp/${{ github.run_id }}-qa-tools
+
       # Load QA config to check if execute is disabled
       - name: Load QA config
         id: config
+        env:
+          ALL_NOTEBOOKS: ${{ needs.collect.outputs.notebooks }}
         run: |
-          python3 << 'EOF'
-          import os
-          from fnmatch import fnmatch
-
-          # Try to load YAML, fall back to empty config if not available
-          try:
-              import yaml
-              HAS_YAML = True
-          except ImportError:
-              HAS_YAML = False
-
-          config_path = '.github/notebook-qa.yml'
-          all_notebooks = "${{ needs.collect.outputs.notebooks }}".split()
-          config = {}
-
-          if HAS_YAML and os.path.exists(config_path):
-              with open(config_path) as f:
-                  config = yaml.safe_load(f) or {}
-
-          disabled = config.get('disabled_checks', [])
-          skip_notebooks = config.get('skip_notebooks', [])
-          per_notebook = config.get('notebooks', {})
-
-          def filter_for_check(check_id, notebooks):
-              """Filter notebook list for a specific check."""
-              result = []
-              for nb in notebooks:
-                  # Skip if notebook matches skip_notebooks patterns
-                  if any(fnmatch(nb, pat) for pat in skip_notebooks):
-                      continue
-                  # Skip if per-notebook config says skip this check
-                  skip_this = False
-                  for pattern, settings in per_notebook.items():
-                      if fnmatch(nb, pattern):
-                          if check_id in settings.get('skip', []):
-                              skip_this = True
-                              break
-                  if not skip_this:
-                      result.append(nb)
-              return result
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              # Global skip flag for execute
-              out.write(f"skip_execute={'true' if 'execute' in disabled else 'false'}\n")
-              # Filtered notebook list for execute
-              filtered = filter_for_check('execute', all_notebooks)
-              out.write(f"notebooks_execute={' '.join(filtered)}\n")
-          EOF
+          python3 .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/write_gha_config.py \
+            --checks execute \
+            --config .github/notebook-qa.yml
 
       - name: Skip execution check
         if: steps.config.outputs.skip_execute == 'true' || steps.config.outputs.notebooks_execute == ''
@@ -359,6 +335,8 @@ jobs:
       - name: (2.2.1, 2.2.4, 2.2.6) Execute notebooks with memory profiling
         id: execute_notebooks
         if: steps.config.outputs.skip_execute != 'true' && steps.config.outputs.notebooks_execute != ''
+        env:
+          NOTEBOOKS_EXECUTE: ${{ steps.config.outputs.notebooks_execute }}
         run: |
           python << 'EOF'
           import os
@@ -366,7 +344,7 @@ jobs:
           from pathlib import Path
           from ploomber_engine import execute_notebook
 
-          notebooks = "${{ steps.config.outputs.notebooks_execute }}".split()
+          notebooks = [nb for nb in os.environ['NOTEBOOKS_EXECUTE'].splitlines() if nb.strip()]
           output_dir = os.environ.get('QA_OUTPUT_DIR', 'qa_outputs')
           Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -433,33 +411,46 @@ jobs:
 
       - name: Build failure summary
         id: summary
+        env:
+          LINT_LINTER: ${{ needs.lint.outputs.linter_result }}
+          LINT_FORMATTER: ${{ needs.lint.outputs.formatter_result }}
+          LINT_PYNBLINT: ${{ needs.lint.outputs.pynblint_result }}
+          LINT_LINKS: ${{ needs.lint.outputs.link_result }}
+          LINT_TESTS: ${{ needs.lint.outputs.test_result }}
+          LINT_DOI: ${{ needs.lint.outputs.doi_result }}
+          LINT_FIGURES: ${{ needs.lint.outputs.figure_result }}
+          LINT_METADATA: ${{ needs.lint.outputs.metadata_result }}
+          LINT_A11Y: ${{ needs.lint.outputs.accessibility_result }}
+          LINT_LICENSE: ${{ needs.lint.outputs.license_result }}
+          LINT_CHANGELOG: ${{ needs.lint.outputs.changelog_result }}
+          EXEC_RESULT: ${{ needs.execute.outputs.execute_result }}
+          JIRA_LABELS_INPUT: ${{ inputs.jira_labels }}
         run: |
           # Build a list of failed checks
           FAILED_CHECKS=""
 
           # Lint job checks
-          [ "${{ needs.lint.outputs.linter_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Linter (ruff check)\n"
-          [ "${{ needs.lint.outputs.formatter_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Formatter (ruff format)\n"
-          [ "${{ needs.lint.outputs.pynblint_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Pynblint\n"
-          [ "${{ needs.lint.outputs.link_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Link checker\n"
-          [ "${{ needs.lint.outputs.test_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Tests/coverage\n"
-          [ "${{ needs.lint.outputs.doi_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- DOI references\n"
-          [ "${{ needs.lint.outputs.figure_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Figure labels/sources\n"
-          [ "${{ needs.lint.outputs.metadata_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Version metadata\n"
-          [ "${{ needs.lint.outputs.accessibility_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Accessibility\n"
-          [ "${{ needs.lint.outputs.license_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- LICENSE file\n"
-          [ "${{ needs.lint.outputs.changelog_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- CHANGELOG\n"
+          [ "$LINT_LINTER" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Linter (ruff check)\n"
+          [ "$LINT_FORMATTER" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Formatter (ruff format)\n"
+          [ "$LINT_PYNBLINT" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Pynblint\n"
+          [ "$LINT_LINKS" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Link checker\n"
+          [ "$LINT_TESTS" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Tests/coverage\n"
+          [ "$LINT_DOI" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- DOI references\n"
+          [ "$LINT_FIGURES" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Figure labels/sources\n"
+          [ "$LINT_METADATA" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Version metadata\n"
+          [ "$LINT_A11Y" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Accessibility\n"
+          [ "$LINT_LICENSE" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- LICENSE file\n"
+          [ "$LINT_CHANGELOG" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- CHANGELOG\n"
 
           # Execute job
-          [ "${{ needs.execute.outputs.execute_result }}" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Notebook execution\n"
+          [ "$EXEC_RESULT" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Notebook execution\n"
 
           echo "failed_checks<<EOF" >> $GITHUB_OUTPUT
           echo -e "$FAILED_CHECKS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
           # Convert comma-separated labels to JSON array
-          LABELS_INPUT="${{ inputs.jira_labels }}"
-          LABELS_JSON=$(echo "$LABELS_INPUT" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -s .)
+          LABELS_JSON=$(echo "$JIRA_LABELS_INPUT" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -s .)
           echo "labels_json=$LABELS_JSON" >> $GITHUB_OUTPUT
 
       - name: Create Jira ticket
@@ -467,7 +458,7 @@ jobs:
         with:
           project: ${{ secrets.JIRA_PROJECT_KEY }}
           issuetype: ${{ inputs.jira_issue_type }}
-          summary: '[Notebook QA] Checks failed in ${{ github.repository }} (${{ github.ref_name }})'
+          summary: "[Notebook QA] Checks failed in ${{ github.repository }} (${{ github.ref_name }})"
           description: |
             h2. Notebook QA Workflow Failure
 

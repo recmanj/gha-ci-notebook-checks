@@ -12,26 +12,12 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
 from qa_config import load_config, filter_notebooks, is_check_disabled
-
-
-def read_notebook(notebook_path: str) -> dict:
-    """Read and parse a Jupyter notebook file."""
-    with open(notebook_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
-def extract_cell_source(cell: dict) -> str:
-    """Extract source from a cell as a single string."""
-    source = cell.get('source', [])
-    if isinstance(source, list):
-        return ''.join(source)
-    return str(source)
+from utils import read_notebook, extract_cell_source
 
 
 def check_metadata(notebook_path: str) -> tuple[str, str | None]:
@@ -50,8 +36,10 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
 
     cells = nb_data.get('cells', [])
 
-    # Check first markdown cell
+    # Check all markdown cells before the first code cell
     for cell in cells:
+        if cell.get('cell_type') == 'code':
+            break  # Stop searching once we hit code
         if cell.get('cell_type') == 'markdown':
             source = extract_cell_source(cell)
             match = re.search(date_pattern, source)
@@ -59,7 +47,6 @@ def check_metadata(notebook_path: str) -> tuple[str, str | None]:
                 date = match.group(1)
                 print(f"✅ {notebook_path}: Last updated {date}")
                 return ("success", date)
-            break  # Only check the first markdown cell
 
     # Fallback: check README.md in same directory
     readme_path = Path(notebook_path).parent / "README.md"
