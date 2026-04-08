@@ -356,6 +356,7 @@ jobs:
           import csv
           from pathlib import Path
           from ploomber_engine import execute_notebook
+          from ploomber_engine.profiling import get_profiling_data
 
           notebooks = [nb for nb in os.environ['NOTEBOOKS_EXECUTE'].splitlines() if nb.strip()]
           output_dir = os.environ.get('QA_OUTPUT_DIR', 'qa_outputs')
@@ -375,17 +376,20 @@ jobs:
                       profile_memory=True,
                       progress_bar=False
                   )
-                  # Save profiling data
-                  if hasattr(result, 'profile') and result.profile:
+                  # Save profiling data from cell metadata
+                  data = get_profiling_data(result)
+                  if data.get('memory') or data.get('runtime'):
                       csv_path = Path(output_dir) / f"{Path(nb).stem}-profiling-data.csv"
                       with open(csv_path, 'w', newline='') as f:
                           writer = csv.DictWriter(f, fieldnames=['cell', 'memory', 'runtime'])
                           writer.writeheader()
                           for i, (mem, time) in enumerate(zip(
-                              result.profile.get('memory', []),
-                              result.profile.get('runtime', [])
+                              data.get('memory', []),
+                              data.get('runtime', [])
                           )):
                               writer.writerow({'cell': i, 'memory': mem, 'runtime': time})
+                  else:
+                      print(f"::warning::No profiling data returned for {nb}")
                   print(f"✅ {nb} executed successfully")
               except Exception as e:
                   print(f"❌ {nb} failed: {e}")
