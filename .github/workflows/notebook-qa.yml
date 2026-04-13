@@ -62,13 +62,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Fetch PR base for diff
+        if: github.event.pull_request.base.sha != ''
+        run: git fetch --depth=1 origin "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
       - name: Get notebooks
         id: notebooks
         env:
           INPUT_NOTEBOOKS: ${{ inputs.notebooks }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$INPUT_NOTEBOOKS" ]; then
             NBS=$(printf '%s\n' $INPUT_NOTEBOOKS)
+          elif [ -n "$BASE_SHA" ]; then
+            NBS=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- '*.ipynb' \
+              | grep -v '\.ipynb_checkpoints/' \
+              | sed 's|^|./|' || true)
           else
             NBS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*')
           fi
