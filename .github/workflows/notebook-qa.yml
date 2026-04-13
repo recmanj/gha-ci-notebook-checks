@@ -111,6 +111,7 @@ jobs:
       accessibility_result: ${{ steps.accessibility_checker.outcome }}
       license_result: ${{ steps.license.outcome }}
       changelog_result: ${{ steps.changelog.outcome }}
+      data_source_result: ${{ steps.data_source_checker.outcome }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -413,7 +414,237 @@ jobs:
           path: ${{ env.QA_OUTPUT_DIR }}
           if-no-files-found: ignore
 
-  # Job 3: Create Jira ticket on failure (optional)
+  # Job 3: QA summary table (PR comment + workflow run summary)
+  summary:
+    needs: [lint, execute]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate QA summary table
+        env:
+          LINK_RESULT: ${{ needs.lint.outputs.link_result }}
+          LICENSE_RESULT: ${{ needs.lint.outputs.license_result }}
+          METADATA_RESULT: ${{ needs.lint.outputs.metadata_result }}
+          LINTER_RESULT: ${{ needs.lint.outputs.linter_result }}
+          FORMATTER_RESULT: ${{ needs.lint.outputs.formatter_result }}
+          PYNBLINT_RESULT: ${{ needs.lint.outputs.pynblint_result }}
+          TEST_RESULT: ${{ needs.lint.outputs.test_result }}
+          FIGURE_RESULT: ${{ needs.lint.outputs.figure_result }}
+          ACCESSIBILITY_RESULT: ${{ needs.lint.outputs.accessibility_result }}
+          CHANGELOG_RESULT: ${{ needs.lint.outputs.changelog_result }}
+          DATA_SOURCE_RESULT: ${{ needs.lint.outputs.data_source_result }}
+          EXECUTE_RESULT: ${{ needs.execute.outputs.execute_result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Map step outcome to status icon
+          icon() {
+            case "$1" in
+              success)   echo "✅" ;;
+              failure)   echo "❌" ;;
+              skipped)   echo "⏭️" ;;
+              cancelled) echo "🚫" ;;
+              *)         echo "➖" ;;
+            esac
+          }
+
+          LINK=$(icon "$LINK_RESULT")
+          LICENSE=$(icon "$LICENSE_RESULT")
+          METADATA=$(icon "$METADATA_RESULT")
+          EXECUTE=$(icon "$EXECUTE_RESULT")
+          DATA_SOURCE=$(icon "$DATA_SOURCE_RESULT")
+          TEST=$(icon "$TEST_RESULT")
+          FIGURE=$(icon "$FIGURE_RESULT")
+          ACCESSIBILITY=$(icon "$ACCESSIBILITY_RESULT")
+          CHANGELOG=$(icon "$CHANGELOG_RESULT")
+
+          # Combined code style: fail if any of linter/formatter/pynblint failed
+          if [ "$LINTER_RESULT" = "failure" ] || [ "$FORMATTER_RESULT" = "failure" ] || [ "$PYNBLINT_RESULT" = "failure" ]; then
+            CODE_STYLE="❌"
+          elif [ "$LINTER_RESULT" = "success" ] || [ "$FORMATTER_RESULT" = "success" ] || [ "$PYNBLINT_RESULT" = "success" ]; then
+            CODE_STYLE="✅"
+          elif [ "$LINTER_RESULT" = "skipped" ] && [ "$FORMATTER_RESULT" = "skipped" ] && [ "$PYNBLINT_RESULT" = "skipped" ]; then
+            CODE_STYLE="⏭️"
+          else
+            CODE_STYLE="➖"
+          fi
+
+          cat > /tmp/qa-summary.md << SUMMARY_EOF
+          <!-- notebook-qa-summary -->
+          <h2>Notebook QA — Automated Review</h2>
+          <p>Collated from <a href="${RUN_URL}">GitHub Actions automated checks</a>.
+          QTO: copy the <em>Automated Result</em> column, then fill in your verdict and notes.</p>
+          <table>
+          <tr>
+            <th colspan="6">AUTOMATED REVIEW</th>
+          </tr>
+          <tr>
+            <th>Category</th>
+            <th>Requirement</th>
+            <th>Criterion</th>
+            <th>Automated Result<br/>(from GH Actions)</th>
+            <th>Final Verdict from QTO</th>
+            <th>Note from QTO</th>
+          </tr>
+          <tr>
+            <td rowspan="5" align="center"><strong>1. Learning Resource Management</strong></td>
+            <td rowspan="5"><strong>Reliable access</strong><br/>Access to the learning resource and all corresponding information must be open, free, and reliable.</td>
+            <td>All links in the learning resource must work.</td>
+            <td align="center">${LINK}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All licences applicable to the learning resource must be provided.</td>
+            <td align="center">${LICENSE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>The date of the most recent version of the learning resource must be stated.</td>
+            <td align="center">${METADATA}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>The date of the most recent execution of the learning resource code must be stated.</td>
+            <td align="center">${EXECUTE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All datasets used in the learning resource must be available.</td>
+            <td align="center">${DATA_SOURCE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td rowspan="9" align="center"><strong>2. Technical Quality</strong></td>
+            <td rowspan="7"><strong>Code Functionality</strong><br/>The code must function as intended, comply with relevant standards, and be user friendly.</td>
+            <td>All code cells must be able to run sequentially without errors.</td>
+            <td align="center">${EXECUTE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All Python code must adhere to the Black style.</td>
+            <td align="center">${CODE_STYLE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All installation/execute instructions must be functional across current devices and operating systems.</td>
+            <td align="center">${EXECUTE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All installation/execute instructions must be functional across current internet browsers.</td>
+            <td align="center">➖</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>The learning resource must be functional using the supplied dependencies and/or environment.</td>
+            <td align="center">${EXECUTE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All dependencies of the source code must be stable and reliable.</td>
+            <td align="center">➖</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All dependencies of the source code must be regularly security checked.</td>
+            <td align="center">➖</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td rowspan="2"><strong>Performance</strong><br/>The learning resource must be responsive.</td>
+            <td>The learning resource must come with a set of tests for evaluating its performance.</td>
+            <td align="center">${TEST}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>Performance tests must pass with X% coverage.</td>
+            <td align="center">${TEST}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td rowspan="2" align="center"><strong>3. User Experience</strong></td>
+            <td><strong>Accessibility</strong><br/>The learning resource must comply with accessibility standards.</td>
+            <td>Key text-based information must be compatible with text to audio software.</td>
+            <td align="center">${ACCESSIBILITY}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Interpretation</strong><br/>The learning resource must maintain scientific integrity.</td>
+            <td>Graphs and figures must be properly labelled and include source information.</td>
+            <td align="center">${FIGURE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td rowspan="3" align="center"><strong>4. Documentation</strong></td>
+            <td rowspan="2"><strong>Scientific Basis and Value</strong><br/>Documentation on the scientific basis and value of the learning resource must be available.</td>
+            <td>Underlying sources, datasets, and publications must be referenced.</td>
+            <td align="center">${DATA_SOURCE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>All figures, tables, and datasets must be accompanied by appropriate attribution and explanations.</td>
+            <td align="center">${FIGURE}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Quality Control</strong><br/>Quality control and validation activities must be fully documented.</td>
+            <td>A record of all revisions and updates must be available in the documentation.</td>
+            <td align="center">${CHANGELOG}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td align="center"><strong>5. Fitness for Purpose and Scientific Soundness</strong></td>
+            <td colspan="2"><strong>In expert reviews only</strong></td>
+            <td align="center">N/A</td>
+            <td>N/A</td>
+            <td>N/A</td>
+          </tr>
+          </table>
+          SUMMARY_EOF
+
+          # Strip leading whitespace from heredoc (indented for YAML readability)
+          sed -i 's/^          //' /tmp/qa-summary.md
+
+          cat /tmp/qa-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post PR comment
+        if: github.event.pull_request.number != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Update existing comment or create a new one
+          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("<!-- notebook-qa-summary -->")) | .id' \
+            | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+              -X PATCH -F body=@/tmp/qa-summary.md
+          else
+            gh pr comment "$PR_NUMBER" -R "${{ github.repository }}" --body-file /tmp/qa-summary.md
+          fi
+
+  # Job 4: Create Jira ticket on failure (optional)
   notify-failure:
     needs: [lint, execute]
     runs-on: ubuntu-latest
