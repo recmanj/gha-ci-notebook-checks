@@ -22,7 +22,6 @@ Config file format:
     notebooks:
       "notebooks/example.ipynb":
         skip:
-          - doi
           - figures
 """
 
@@ -75,7 +74,7 @@ def is_check_disabled(config: dict[str, Any], check_id: str) -> bool:
 
     Args:
         config: Configuration dictionary
-        check_id: Check identifier (e.g., 'linter', 'doi', 'figures')
+        check_id: Check identifier (e.g., 'linter', 'figures', 'metadata')
 
     Returns:
         True if check is globally disabled, False otherwise

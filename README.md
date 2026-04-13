@@ -15,8 +15,6 @@ This workflow implements QA automation for Jupyter Notebooks. The checks below r
 
 **Notebook linting** (`pynblint`) — Runs `pynblint` on each notebook. Checks notebook-level quality issues such as non-linear execution order, empty cells, or untitled notebooks.
 
-**DOI citation** (`doi`) — Checks that dataset DOIs found in code cell outputs are valid and cited. Notebooks must be committed with outputs for this check to work. Each DOI must resolve via `doi.org` and appear in at least one markdown cell. Skipped if no dataset DOI metadata is found in outputs.
-
 **Link availability** (`links`) — Runs `lychee` against all notebooks. Every URL in markdown and code cells must be reachable.
 
 **Notebook execution** (`execute`) — Executes each notebook end-to-end with `ploomber-engine`. The notebook must run without errors. Memory usage and runtime are profiled per cell and uploaded as an artifact.
@@ -89,7 +87,6 @@ skip_notebooks:
 notebooks:
   "notebooks/example.ipynb":
     skip:
-      - doi
       - figures
 
 # Test configuration
@@ -107,7 +104,7 @@ The baseline pynblint exclusion list suppresses `missing-h1-MD-heading` (MyST no
 
 Available pynblint rule slugs: `non-linear-execution`, `notebook-too-long`, `untitled-notebook`, `non-portable-chars-in-nb-name`, `notebook-name-too-long`, `imports-beyond-first-cell`, `missing-h1-MD-heading`, `missing-opening-MD-text`, `missing-closing-MD-text`, `too-few-MD-cells`, `duplicate-notebook-not-renamed`, `invalid-python-syntax`, `non-executed-notebook`, `non-executed-cells`, `empty-cells`, `long-multiline-python-comment`, `cell-too-long`
 
-Valid check IDs: `linter`, `formatter`, `pynblint`, `links`, `tests`, `doi`, `figures`, `metadata`, `accessibility`, `license`, `changelog`, `execute`
+Valid check IDs: `linter`, `formatter`, `pynblint`, `links`, `tests`, `figures`, `metadata`, `accessibility`, `license`, `changelog`, `execute`
 
 
 #### QA criteria reference
@@ -116,7 +113,6 @@ Valid check IDs: `linter`, `formatter`, `pynblint`, `links`, `tests`, `doi`, `fi
 |-------|---------------------------|------------------------|
 | 1.2.3 | Link availability         | lychee                 |
 | 1.2.4 | License file              | LICENSE existence       |
-| 1.2.5 | DOI citation              | doi_checker.py         |
 | 1.2.6 | Version metadata          | metadata_checker.py    |
 | 2.2.1 | Code execution            | ploomber-engine        |
 | 2.2.3 | Code style                | ruff, pynblint         |

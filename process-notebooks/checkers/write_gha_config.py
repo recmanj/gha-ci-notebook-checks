@@ -7,7 +7,7 @@ the results as GitHub Actions step outputs.
 
 Usage (lint job — all checks + extras):
     python write_gha_config.py \
-        --checks linter formatter pynblint links tests doi figures \
+        --checks linter formatter pynblint links tests figures \
                  metadata accessibility license changelog \
         --config .github/notebook-qa.yml \
         --extras

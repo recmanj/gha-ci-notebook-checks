@@ -95,7 +95,6 @@ jobs:
       pynblint_result: ${{ steps.pynblint.outcome }}
       link_result: ${{ steps.link_checker.outcome }}
       test_result: ${{ steps.test_checker.outcome }}
-      doi_result: ${{ steps.doi_checker.outcome }}
       figure_result: ${{ steps.figure_checker.outcome }}
       metadata_result: ${{ steps.metadata_checker.outcome }}
       accessibility_result: ${{ steps.accessibility_checker.outcome }}
@@ -129,7 +128,7 @@ jobs:
           ALL_NOTEBOOKS: ${{ needs.collect.outputs.notebooks }}
         run: |
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/write_gha_config.py \
-            --checks linter formatter pynblint links tests doi figures metadata accessibility license changelog \
+            --checks linter formatter pynblint links tests figures metadata accessibility license changelog \
             --config .github/notebook-qa.yml \
             --extras
 
@@ -215,19 +214,6 @@ jobs:
           fi
 
       # Custom checks
-      # NOTE: DOI check scans code cell outputs for dataset DOIs.
-      # Requires notebooks committed with outputs. See doi_checker.py docstring.
-      - name: (1.2.5) Check for DOI references
-        id: doi_checker
-        if: (success() || failure()) && steps.config.outputs.skip_doi != 'true' && steps.config.outputs.notebooks_doi != ''
-        env:
-          NOTEBOOKS: ${{ steps.config.outputs.notebooks_doi }}
-        run: |
-          mapfile -t nbs <<< "$NOTEBOOKS"
-          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/doi_checker.py \
-            --config .github/notebook-qa.yml \
-            "${nbs[@]}"
-
       - name: (3.3.2) Check figure labels and sources
         id: figure_checker
         if: (success() || failure()) && steps.config.outputs.skip_figures != 'true' && steps.config.outputs.notebooks_figures != ''
@@ -428,7 +414,6 @@ jobs:
           LINT_PYNBLINT: ${{ needs.lint.outputs.pynblint_result }}
           LINT_LINKS: ${{ needs.lint.outputs.link_result }}
           LINT_TESTS: ${{ needs.lint.outputs.test_result }}
-          LINT_DOI: ${{ needs.lint.outputs.doi_result }}
           LINT_FIGURES: ${{ needs.lint.outputs.figure_result }}
           LINT_METADATA: ${{ needs.lint.outputs.metadata_result }}
           LINT_A11Y: ${{ needs.lint.outputs.accessibility_result }}
@@ -446,7 +431,6 @@ jobs:
           [ "$LINT_PYNBLINT" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Pynblint\n"
           [ "$LINT_LINKS" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Link checker\n"
           [ "$LINT_TESTS" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Tests/coverage\n"
-          [ "$LINT_DOI" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- DOI references\n"
           [ "$LINT_FIGURES" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Figure labels/sources\n"
           [ "$LINT_METADATA" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Version metadata\n"
           [ "$LINT_A11Y" = "failure" ] && FAILED_CHECKS="${FAILED_CHECKS}- Accessibility\n"
