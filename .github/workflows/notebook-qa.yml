@@ -141,7 +141,7 @@ jobs:
           NOTEBOOKS: ${{ steps.config.outputs.notebooks_linter }}
         run: |
           mapfile -t nbs <<< "$NOTEBOOKS"
-          nbqa "ruff check" "${nbs[@]}"
+          ruff check "${nbs[@]}"
 
       - name: (2.2.3) Run formatter
         id: formatter
@@ -150,7 +150,7 @@ jobs:
           NOTEBOOKS: ${{ steps.config.outputs.notebooks_formatter }}
         run: |
           mapfile -t nbs <<< "$NOTEBOOKS"
-          nbqa "ruff format --check --diff" "${nbs[@]}"
+          ruff format --check --diff "${nbs[@]}"
 
       - name: (2.2.3) Run pynblint
         id: pynblint

@@ -9,9 +9,9 @@ This workflow implements QA automation for Jupyter Notebooks. The checks below r
 
 #### Checks
 
-**Code linting** (`linter`) — Runs `ruff check` via `nbqa` on all code cells. No Python lint violations allowed.
+**Code linting** (`linter`) — Runs `ruff check` on all code cells. No Python lint violations allowed.
 
-**Code formatting** (`formatter`) — Runs `ruff format --check` via `nbqa`. Code cells must conform to `ruff` formatting rules.
+**Code formatting** (`formatter`) — Runs `ruff format --check` on code cells. Code cells must conform to `ruff` formatting rules.
 
 **Notebook linting** (`pynblint`) — Runs `pynblint` on each notebook. Checks notebook-level quality issues such as non-linear execution order, empty cells, or untitled notebooks.
 
