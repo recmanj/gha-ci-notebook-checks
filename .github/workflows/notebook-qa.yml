@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: "notebook-qa,automated"
+      auto_update_dates:
+        description: "Auto-update 'Last updated' dates in PR notebooks and commit back"
+        required: false
+        type: boolean
+        default: true
     secrets:
       JIRA_BASE_URL:
         required: false
@@ -142,6 +147,24 @@ jobs:
             --checks linter formatter pynblint links tests figures metadata data_source accessibility license changelog \
             --config .github/notebook-qa.yml \
             --extras
+
+      # Auto-update metadata dates (PR only)
+      - name: (1.2.6) Update metadata dates
+        id: update_dates
+        if: >-
+          (success() || failure()) &&
+          inputs.auto_update_dates == true &&
+          github.event.pull_request.head.ref != '' &&
+          steps.config.outputs.skip_metadata != 'true' &&
+          steps.config.outputs.notebooks_metadata != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_metadata }}
+        run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/metadata_checker.py \
+            --update "$(date -u +%Y-%m-%d)" \
+            --config .github/notebook-qa.yml \
+            "${nbs[@]}"
 
       # Linting checks
       - name: (2.2.3) Run linter
@@ -289,6 +312,48 @@ jobs:
           else
             echo "❌ CHANGELOG.md file is missing or empty"
             exit 1
+          fi
+
+      # Commit auto-updated dates back to PR branch
+      - name: Commit date updates to PR
+        id: commit_dates
+        if: >-
+          (success() || failure()) &&
+          inputs.auto_update_dates == true &&
+          github.event.pull_request.head.ref != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          CHANGED=$(git diff --name-only -- '*.ipynb' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No date changes to commit"
+            exit 0
+          fi
+
+          # Save updated notebooks
+          while IFS= read -r nb; do
+            mkdir -p "/tmp/updated/$(dirname "$nb")"
+            cp "$nb" "/tmp/updated/$nb"
+          done <<< "$CHANGED"
+
+          # Switch to the actual PR branch
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${PR_REPO}"
+          git fetch origin "$PR_REF"
+          git checkout "$PR_REF"
+
+          # Restore updated notebooks
+          while IFS= read -r nb; do
+            cp "/tmp/updated/$nb" "$nb"
+          done <<< "$CHANGED"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $CHANGED
+          if ! git diff --cached --quiet; then
+            git commit -m "[skip ci] Update notebook metadata dates"
+            git push origin "$PR_REF"
           fi
 
   # Job 2: Notebook execution (resource-intensive, configurable runner)
