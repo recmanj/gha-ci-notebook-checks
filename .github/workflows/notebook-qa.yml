@@ -139,7 +139,7 @@ jobs:
           ALL_NOTEBOOKS: ${{ needs.collect.outputs.notebooks }}
         run: |
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/write_gha_config.py \
-            --checks linter formatter pynblint links tests figures metadata accessibility license changelog \
+            --checks linter formatter pynblint links tests figures metadata data_source accessibility license changelog \
             --config .github/notebook-qa.yml \
             --extras
 
@@ -245,6 +245,18 @@ jobs:
         run: |
           mapfile -t nbs <<< "$NOTEBOOKS"
           python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/metadata_checker.py \
+            --config .github/notebook-qa.yml \
+            "${nbs[@]}"
+
+      # Data source check (warning only, criterion 1.2.8)
+      - name: (1.2.8) Check data sources
+        id: data_source_checker
+        if: (success() || failure()) && steps.config.outputs.skip_data_source != 'true' && steps.config.outputs.notebooks_data_source != ''
+        env:
+          NOTEBOOKS: ${{ steps.config.outputs.notebooks_data_source }}
+        run: |
+          mapfile -t nbs <<< "$NOTEBOOKS"
+          python .tmp/${{ github.run_id }}-qa-tools/process-notebooks/checkers/data_source_checker.py \
             --config .github/notebook-qa.yml \
             "${nbs[@]}"
 
