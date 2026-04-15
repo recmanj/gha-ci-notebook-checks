@@ -42,6 +42,11 @@ except ImportError:
 PYNBLINT_DEFAULT_EXCLUDE = ["missing-h1-MD-heading", "imports-beyond-first-cell"]
 
 
+def _normalize_path(path: str) -> str:
+    """Remove leading ./ from a path for consistent fnmatch matching."""
+    return path.removeprefix("./")
+
+
 def load_config(config_path: str = ".github/notebook-qa.yml") -> dict[str, Any]:
     """
     Load QA configuration from YAML file.
@@ -95,6 +100,7 @@ def is_notebook_skipped(config: dict[str, Any], notebook: str) -> bool:
         True if notebook should be skipped, False otherwise
     """
     skip_patterns = config.get("skip_notebooks", [])
+    notebook = _normalize_path(notebook)
     return any(fnmatch(notebook, pattern) for pattern in skip_patterns)
 
 
@@ -111,6 +117,7 @@ def is_check_skipped_for_notebook(config: dict[str, Any], check_id: str, noteboo
         True if check should be skipped for this notebook, False otherwise
     """
     per_notebook = config.get("notebooks", {})
+    notebook = _normalize_path(notebook)
     for pattern, settings in per_notebook.items():
         if fnmatch(notebook, pattern):
             skip_checks = settings.get("skip", [])

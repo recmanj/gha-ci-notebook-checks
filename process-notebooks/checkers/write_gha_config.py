@@ -30,9 +30,8 @@ from qa_config import get_filtered_notebooks_for_check, get_pynblint_exclude, lo
 
 def parse_notebook_list(raw: str) -> list[str]:
     """Parse notebook list from newline-separated (or space-separated) string."""
-    if "\n" in raw:
-        return [nb.strip() for nb in raw.splitlines() if nb.strip()]
-    return raw.split()
+    nbs = [nb.strip() for nb in raw.splitlines() if nb.strip()] if "\n" in raw else raw.split()
+    return [nb.removeprefix("./") for nb in nbs]
 
 
 def write_multiline_output(fh, key: str, lines: list[str]) -> None:

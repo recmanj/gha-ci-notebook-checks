@@ -78,10 +78,9 @@ jobs:
             NBS=$(printf '%s\n' $INPUT_NOTEBOOKS)
           elif [ -n "$BASE_SHA" ]; then
             NBS=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- '*.ipynb' \
-              | grep -v '\.ipynb_checkpoints/' \
-              | sed 's|^|./|' || true)
+              | grep -v '\.ipynb_checkpoints/' || true)
           else
-            NBS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*')
+            NBS=$(find . -name '*.ipynb' -not -path '*/.ipynb_checkpoints/*' -printf '%P\n')
           fi
           if [ -z "$NBS" ]; then
             echo "files=" >> "$GITHUB_OUTPUT"
