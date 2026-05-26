@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4==4.14.3",
-    "click>=8.1,<8.2",  # pynblint/typer breaks with click>=8.2
+    "click>=8.3.2,<8.4",  # pynblint/typer breaks with click>=8.2
     "lxml==6.0.2",
     "pytest==9.0.3",
     "pytest-cov==7.1.0",
